@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Oddy crow logo">
+  <defs>
+    <linearGradient id="sky" x1="70" y1="35" x2="448" y2="476" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#83E3D2"/>
+      <stop offset="1" stop-color="#8DBBFF"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
+  <circle cx="397" cy="112" r="58" fill="#FFE073"/>
+  <path d="M173 343 74 405l119-25-59 77 112-70Z" fill="#3C356F"/>
+  <path d="M190 273c28-67 96-101 157-72 67 32 78 118 31 178-51 65-161 73-215 12-33-37-19-82 27-118Z" fill="#433A78"/>
+  <path d="M254 186c25-62 96-89 151-54 33 21 49 55 43 91l-4 25-92 29-91-26c-17-18-19-40-7-65Z" fill="#433A78"/>
+  <path d="M399 184c38 4 76 20 107 43l-86 31-42-30Z" fill="#433A78"/>
+  <path d="m420 241 86-14-76 39-29-20Z" fill="#FF8A62"/>
+  <path d="M197 319c39-59 114-77 168-35-4 44-26 83-63 106l-38 31 2-35-48 29 15-39-48 9 28-34c-25-1-28-14-16-32Z" fill="#7567D8"/>
+  <path d="M241 326c35-22 76-28 112-14-17 28-43 49-77 61l8-22-35 14 12-23-31 5Z" fill="#8EDAF1" opacity=".8"/>
+  <circle cx="371" cy="190" r="22" fill="#FFF9E8"/>
+  <circle cx="378" cy="190" r="10" fill="#292653"/>
+  <circle cx="382" cy="186" r="3.5" fill="#FFFFFF"/>
+</svg>

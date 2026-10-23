@@ -1,0 +1,36 @@
+{
+  "name": "oddy-dataverse",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "postinstall": "wxt prepare",
+    "typecheck": "wxt prepare && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@wxt-dev/module-react": "^1.2.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "overrides": {
+    "@wxt-dev/module-react": {
+      "@vitejs/plugin-react": "5.1.4"
+    }
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.32",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "5.1.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.11",
+    "vitest": "^3.2.4",
+    "wxt": "^0.21.4"
+  }
+}
