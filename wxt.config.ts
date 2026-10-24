@@ -1,11 +1,12 @@
 import { defineConfig } from 'wxt';
+import packageJson from './package.json';
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: 'Oddy',
     description: 'An AI navigator for Microsoft Dataverse and model-driven apps.',
-    version: '0.1.0',
+    version: packageJson.version,
     minimum_chrome_version: '116',
     permissions: ['storage', 'sidePanel', 'tabs', 'scripting'],
     host_permissions: [
