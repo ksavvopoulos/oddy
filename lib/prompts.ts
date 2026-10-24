@@ -2,24 +2,10 @@ import type { ChatMessage, DataverseContext, DataverseField } from './types';
 
 export const QUICK_ACTIONS = [
   {
-    id: 'summarize',
-    label: 'Summarize record',
-    prompt: 'Summarize this Dataverse record. Highlight its current state, important dates, owners, and actionable risks.'
-  },
-  {
-    id: 'next-steps',
-    label: 'Suggest next steps',
-    prompt: 'Based on this Dataverse record, suggest practical next steps. Separate facts from assumptions.'
-  },
-  {
-    id: 'explain',
-    label: 'Explain fields',
-    prompt: 'Explain the supplied Dataverse fields in plain language and identify values that may need attention.'
-  },
-  {
-    id: 'fetchxml',
-    label: 'Draft FetchXML',
-    prompt: 'Draft a FetchXML query for records like this one. Explain placeholders and do not invent schema names that are not supplied.'
+    id: 'create-marketing-list',
+    label: 'Create marketing list',
+    prompt:
+      'Help me create a Dataverse marketing list. Ask me for any missing details, including the list name, whether it is static or dynamic, and whether its members are accounts, contacts, or leads. Once the required details are known, prepare the marketing list record for my approval. Do not invent values, add members, or claim the list was created before I approve it.'
   }
 ] as const;
 

@@ -7,7 +7,7 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 - Detects the active Dataverse environment, table, record, form, and available form fields
 - Reads `Xrm.Page` form context across accessible app frames when available
 - Falls back to the Dataverse Web API using the existing signed-in browser session
-- Provides quick actions for record summaries, next steps, field explanations, and FetchXML drafting
+- Provides a quick action for preparing a new Dataverse marketing list for approval
 - Gives Azure OpenAI seven composable primitives for schema resolution, structured record queries, relationship discovery, personal-view management, view execution, record-change previews, and navigation
 - Uses a shared structured query model for filters, selected columns, sorting, row limits, view FetchXML, and grid layouts
 - Resolves table and column display names to logical metadata at runtime

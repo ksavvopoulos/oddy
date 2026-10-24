@@ -41,7 +41,7 @@ h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: -.025em; over
 .context-warning { color: #8a6220; background: #fff8e8; border-radius: 8px; padding: 8px; margin: 11px 0 0; font-size: 11px; line-height: 1.4; }
 
 .quick-section { margin: 20px 14px 0; }
-.quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.quick-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .quick-grid button { min-height: 39px; text-align: left; color: #38415d; background: white; border: 1px solid #e2e5ee; border-radius: 10px; padding: 9px 10px; font-size: 11px; font-weight: 700; }
 .quick-grid button:hover { color: #5144c4; border-color: #bdb7ec; background: #faf9ff; }
 
