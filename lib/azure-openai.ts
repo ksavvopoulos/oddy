@@ -160,8 +160,7 @@ export async function callAzureOpenAICompletion(
       body: JSON.stringify(body)
     });
     const payload = (await response.json().catch(() => undefined)) as
-      | AzureCompletionPayload
-      | undefined;
+      AzureCompletionPayload | undefined;
     return { response, payload };
   };
 
@@ -263,8 +262,7 @@ export async function callAzureOpenAIResponses(
     body: JSON.stringify(body)
   });
   const payload = (await response.json().catch(() => undefined)) as
-    | AzureResponsesPayload
-    | undefined;
+    AzureResponsesPayload | undefined;
 
   if (!response.ok) {
     const detail = payload?.error?.message || `${response.status} ${response.statusText}`;

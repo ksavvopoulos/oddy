@@ -20,15 +20,13 @@ export default defineContentScript({
           cleanup();
           return;
         }
-        void chrome.runtime
-          .sendMessage({ type: 'CONTEXT_CHANGED' })
-          .catch(() => {
-            try {
-              if (!chrome.runtime?.id) cleanup();
-            } catch {
-              cleanup();
-            }
-          });
+        void chrome.runtime.sendMessage({ type: 'CONTEXT_CHANGED' }).catch(() => {
+          try {
+            if (!chrome.runtime?.id) cleanup();
+          } catch {
+            cleanup();
+          }
+        });
       } catch {
         // Reloading an unpacked extension invalidates content scripts already
         // running in open tabs. Stop this stale instance without logging errors.

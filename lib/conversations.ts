@@ -1,71 +1,17 @@
-import type {
-  DataverseMutationExecutionResult,
-  MarketingListMembershipExecutionResult,
-  OddySkillChangeExecutionResult,
-  PreparedDataverseMutation,
-  PreparedMarketingListMembership,
-  PreparedOddySkillChange,
-  ToolActivity
-} from './types';
+import type { StoredConversation, ConversationSummary } from './conversation-model';
+import { conversationIdsToDelete, type HistoryLimits } from './history-policy';
+export type {
+  StoredConversation,
+  StoredTranscriptItem,
+  StoredMutationApprovalState,
+  StoredListMembershipApprovalState,
+  StoredSkillChangeApprovalState,
+  ConversationSummary
+} from './conversation-model';
 
 const DATABASE_NAME = 'oddy-local-history';
 const DATABASE_VERSION = 1;
 const STORE_NAME = 'conversations';
-
-export interface StoredTranscriptItem {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  toolsUsed?: ToolActivity[];
-  pendingMutations?: PreparedDataverseMutation[];
-  pendingListMemberships?: PreparedMarketingListMembership[];
-  pendingSkillChanges?: PreparedOddySkillChange[];
-  historical?: boolean;
-}
-
-export interface StoredMutationApprovalState {
-  selectedColumns: string[];
-  status: 'pending' | 'approving' | 'approved' | 'rejected' | 'error';
-  result?: DataverseMutationExecutionResult;
-  error?: string;
-}
-
-export interface StoredListMembershipApprovalState {
-  selectedMemberIds: string[];
-  status: 'pending' | 'approving' | 'approved' | 'rejected' | 'error';
-  result?: MarketingListMembershipExecutionResult;
-  error?: string;
-}
-
-export interface StoredSkillChangeApprovalState {
-  status: 'pending' | 'approving' | 'approved' | 'rejected' | 'error';
-  result?: OddySkillChangeExecutionResult;
-  error?: string;
-}
-
-export interface StoredConversation {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  environmentName?: string;
-  environmentOrigin?: string;
-  tableLogicalName?: string;
-  transcript: StoredTranscriptItem[];
-  mutationApprovals: Record<string, StoredMutationApprovalState>;
-  listMembershipApprovals: Record<string, StoredListMembershipApprovalState>;
-  skillChangeApprovals: Record<string, StoredSkillChangeApprovalState>;
-}
-
-export interface ConversationSummary {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  environmentName?: string;
-  tableLogicalName?: string;
-  messageCount: number;
-}
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -77,8 +23,10 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 function transactionDone(transaction: IDBTransaction): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error || new Error('IndexedDB transaction failed.'));
-    transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction was aborted.'));
+    transaction.onerror = () =>
+      reject(transaction.error || new Error('IndexedDB transaction failed.'));
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('IndexedDB transaction was aborted.'));
   });
 }
 
@@ -95,112 +43,84 @@ async function openDatabase(): Promise<IDBDatabase> {
   return requestResult(request);
 }
 
-export async function saveConversation(
-  conversation: StoredConversation,
-  limits: { maxConversations: number; retentionDays: number }
-): Promise<void> {
+/** All requests share connection cleanup and await transaction commit, not just request success. */
+async function withStore<Result>(
+  mode: IDBTransactionMode,
+  work: (store: IDBObjectStore) => Result | Promise<Result>
+): Promise<Result> {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
-    transaction.objectStore(STORE_NAME).put(conversation);
-    await transactionDone(transaction);
+    const transaction = database.transaction(STORE_NAME, mode);
+    const done = transactionDone(transaction);
+    try {
+      const [result] = await Promise.all([work(transaction.objectStore(STORE_NAME)), done]);
+      return result;
+    } catch (error) {
+      // A failed callback must not leave a partially completed write transaction.
+      try {
+        transaction.abort();
+      } catch {
+        /* The transaction may already have settled. */
+      }
+      await done.catch(() => undefined);
+      throw error;
+    }
   } finally {
     database.close();
   }
-  await pruneConversations(limits);
+}
+
+async function pruneStore(store: IDBObjectStore, limits: HistoryLimits): Promise<void> {
+  const conversations = await requestResult(store.getAll() as IDBRequest<StoredConversation[]>);
+  for (const id of conversationIdsToDelete(conversations, limits)) store.delete(id);
+}
+
+export async function saveConversation(
+  conversation: StoredConversation,
+  limits: HistoryLimits
+): Promise<void> {
+  // Saving and pruning in one transaction avoids deleting a concurrently updated conversation.
+  await withStore('readwrite', async (store) => {
+    store.put(conversation);
+    await pruneStore(store, limits);
+  });
 }
 
 export async function getConversation(id: string): Promise<StoredConversation | undefined> {
-  const database = await openDatabase();
-  try {
-    const transaction = database.transaction(STORE_NAME, 'readonly');
-    const done = transactionDone(transaction);
-    const result = await requestResult(
-      transaction.objectStore(STORE_NAME).get(id) as IDBRequest<StoredConversation | undefined>
-    );
-    await done;
-    return result;
-  } finally {
-    database.close();
-  }
+  return withStore('readonly', (store) =>
+    requestResult(store.get(id) as IDBRequest<StoredConversation | undefined>)
+  );
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const database = await openDatabase();
-  try {
-    const transaction = database.transaction(STORE_NAME, 'readonly');
-    const done = transactionDone(transaction);
-    const conversations = await requestResult(
-      transaction.objectStore(STORE_NAME).getAll() as IDBRequest<StoredConversation[]>
-    );
-    await done;
-    return conversations
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((conversation) => ({
-        id: conversation.id,
-        title: conversation.title,
-        createdAt: conversation.createdAt,
-        updatedAt: conversation.updatedAt,
-        environmentName: conversation.environmentName,
-        tableLogicalName: conversation.tableLogicalName,
-        messageCount: conversation.transcript.length
-      }));
-  } finally {
-    database.close();
-  }
+  const conversations = await withStore('readonly', (store) =>
+    requestResult(store.getAll() as IDBRequest<StoredConversation[]>)
+  );
+  return conversations
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .map((conversation) => ({
+      id: conversation.id,
+      title: conversation.title,
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+      environmentName: conversation.environmentName,
+      tableLogicalName: conversation.tableLogicalName,
+      messageCount: conversation.transcript.length
+    }));
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const database = await openDatabase();
-  try {
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
-    transaction.objectStore(STORE_NAME).delete(id);
-    await transactionDone(transaction);
-  } finally {
-    database.close();
-  }
+  await withStore('readwrite', (store) => {
+    store.delete(id);
+  });
 }
 
 export async function clearConversations(): Promise<void> {
-  const database = await openDatabase();
-  try {
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
-    transaction.objectStore(STORE_NAME).clear();
-    await transactionDone(transaction);
-  } finally {
-    database.close();
-  }
+  await withStore('readwrite', (store) => {
+    store.clear();
+  });
 }
 
-export async function pruneConversations(limits: {
-  maxConversations: number;
-  retentionDays: number;
-}): Promise<void> {
-  const database = await openDatabase();
-  try {
-    const readTransaction = database.transaction(STORE_NAME, 'readonly');
-    const readDone = transactionDone(readTransaction);
-    const conversations = await requestResult(
-      readTransaction.objectStore(STORE_NAME).getAll() as IDBRequest<StoredConversation[]>
-    );
-    await readDone;
-
-    const maximum = Math.min(Math.max(Math.trunc(limits.maxConversations), 1), 500);
-    const retentionDays = Math.min(Math.max(Math.trunc(limits.retentionDays), 1), 3650);
-    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-    const sorted = conversations.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    const deleteIds = sorted
-      .filter((conversation, index) =>
-        index >= maximum || new Date(conversation.updatedAt).getTime() < cutoff
-      )
-      .map((conversation) => conversation.id);
-    if (!deleteIds.length) return;
-
-    const writeTransaction = database.transaction(STORE_NAME, 'readwrite');
-    const store = writeTransaction.objectStore(STORE_NAME);
-    for (const id of deleteIds) store.delete(id);
-    await transactionDone(writeTransaction);
-  } finally {
-    database.close();
-  }
+export async function pruneConversations(limits: HistoryLimits): Promise<void> {
+  await withStore('readwrite', (store) => pruneStore(store, limits));
 }

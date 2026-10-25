@@ -43,10 +43,9 @@ describe('Dataverse URL context', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ EntitySetName: 'accounts', PrimaryNameAttribute: 'name' }),
-          { status: 200 }
-        )
+        new Response(JSON.stringify({ EntitySetName: 'accounts', PrimaryNameAttribute: 'name' }), {
+          status: 200
+        })
       )
       .mockResolvedValueOnce(
         new Response(
@@ -68,9 +67,9 @@ describe('Dataverse URL context', () => {
 
     expect(snapshot.source).toBe('webApi');
     expect(snapshot.recordName).toBe('Contoso');
-    expect(snapshot.fields?.find((field) => field.logicalName === 'statuscode')?.formattedValue).toBe(
-      'Active'
-    );
+    expect(
+      snapshot.fields?.find((field) => field.logicalName === 'statuscode')?.formattedValue
+    ).toBe('Active');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

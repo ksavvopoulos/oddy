@@ -121,7 +121,8 @@ export interface DataverseMutationExecutionResult {
   recordId: string;
   recordName?: string;
   changedColumns: string[];
-  refreshStatus?: 'form-refreshed' | 'page-refreshed' | 'skipped-dirty' | 'not-applicable' | 'failed';
+  refreshStatus?:
+    'form-refreshed' | 'page-refreshed' | 'skipped-dirty' | 'not-applicable' | 'failed';
   refreshMessage?: string;
 }
 

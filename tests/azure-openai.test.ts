@@ -26,9 +26,9 @@ describe('buildAzureOpenAIUrl', () => {
   });
 
   it('rejects non-Azure hosts', () => {
-    expect(() =>
-      buildAzureOpenAIUrl({ ...settings, endpoint: 'https://example.com' })
-    ).toThrow(/Azure OpenAI/);
+    expect(() => buildAzureOpenAIUrl({ ...settings, endpoint: 'https://example.com' })).toThrow(
+      /Azure OpenAI/
+    );
   });
 
   it('builds the v1 Responses API URL', () => {

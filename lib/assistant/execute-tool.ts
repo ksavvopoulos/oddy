@@ -1,0 +1,174 @@
+import type { DataversePrimitiveRequest } from '../dataverse-primitives';
+import { executePrimitiveInActiveTab } from '../browser/primitives';
+import { navigateDataverse } from '../browser/navigation';
+import { errorMessage } from '../messages';
+import { getUserSkills, prepareOddySkillChange, skillRevision } from '../skills';
+import type { DataverseContext } from '../types';
+import type { AssistantToolResult } from './contracts';
+import {
+  stringValue,
+  optionalString,
+  stringArray,
+  numberValue,
+  queryFromArguments,
+  mutationValueArray,
+  marketingListMemberArray,
+  skillFromToolArguments
+} from './arguments';
+
+export async function executeAssistantTool(
+  context: DataverseContext,
+  toolName: string,
+  rawArguments: string,
+  requestId?: string
+): Promise<AssistantToolResult> {
+  let args: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(rawArguments || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Tool arguments must be a JSON object.');
+    }
+    args = parsed as Record<string, unknown>;
+  } catch {
+    return { ok: false, error: 'The model supplied invalid JSON tool arguments.' };
+  }
+
+  if (toolName === 'list_oddy_skills') {
+    const skills = await getUserSkills();
+    return {
+      ok: true,
+      action: 'list_skills',
+      skills: skills.map(({ id, name, description, version, enabled }) => ({
+        id,
+        name,
+        description,
+        version,
+        enabled
+      }))
+    };
+  }
+
+  if (toolName === 'get_oddy_skill') {
+    const skillId = stringValue(args.skillId);
+    const skill = (await getUserSkills()).find((item) => item.id === skillId);
+    return skill
+      ? { ok: true, action: 'get_skill', skill, revision: skillRevision(skill) }
+      : {
+          ok: false,
+          action: 'get_skill',
+          error: 'The requested custom skill was not found. Bundled skills are immutable.'
+        };
+  }
+
+  if (toolName === 'prepare_oddy_skill_change') {
+    const operation = args.operation;
+    if (operation !== 'create' && operation !== 'update' && operation !== 'delete') {
+      return {
+        ok: false,
+        action: 'prepare_skill_change',
+        error: 'A valid skill-change operation is required.'
+      };
+    }
+    try {
+      const skill = operation === 'delete' ? undefined : skillFromToolArguments(args.skill);
+      const change = await prepareOddySkillChange({
+        operation,
+        skillId: optionalString(args.skillId),
+        skill,
+        baseRevision: optionalString(args.baseRevision)
+      });
+      return { ok: true, action: 'prepare_skill_change', change };
+    } catch (error) {
+      return {
+        ok: false,
+        action: 'prepare_skill_change',
+        error: errorMessage(error)
+      };
+    }
+  }
+
+  if (toolName === 'navigate_dataverse') {
+    return navigateDataverse(
+      context,
+      {
+        target: args.target === 'view' || args.target === 'record' ? args.target : 'list',
+        tableLogicalName: stringValue(args.tableLogicalName),
+        recordId: optionalString(args.recordId),
+        viewId: optionalString(args.viewId),
+        viewType: args.viewType === 'savedquery' ? 'savedquery' : 'userquery'
+      },
+      requestId
+    );
+  }
+
+  if (!context.origin) {
+    return { ok: false, action: 'resolve_schema', error: 'The Dataverse origin is unavailable.' };
+  }
+
+  let request: DataversePrimitiveRequest;
+  if (toolName === 'resolve_dataverse_schema') {
+    request = {
+      action: 'resolve_schema',
+      origin: context.origin,
+      table: stringValue(args.table),
+      columns: stringArray(args.columns, 20)
+    };
+  } else if (toolName === 'query_dataverse_records') {
+    request = {
+      action: 'query_records',
+      origin: context.origin,
+      query: queryFromArguments(args)
+    };
+  } else if (toolName === 'discover_dataverse_relationships') {
+    request = {
+      action: 'discover_relationships',
+      origin: context.origin,
+      sourceTable: stringValue(args.sourceTable),
+      targetTable: stringValue(args.targetTable)
+    };
+  } else if (toolName === 'manage_dataverse_view') {
+    const action = args.action === 'upsert' ? 'upsert' : 'get';
+    request =
+      action === 'get'
+        ? {
+            action: 'get_view',
+            origin: context.origin,
+            table: stringValue(args.table)
+          }
+        : {
+            action: 'upsert_view',
+            origin: context.origin,
+            query: queryFromArguments(args),
+            layoutColumns: stringArray(args.layoutColumns, 12)
+          };
+  } else if (toolName === 'execute_dataverse_view') {
+    request = {
+      action: 'execute_view',
+      origin: context.origin,
+      table: stringValue(args.table),
+      top: numberValue(args.top, 10, 1, 50)
+    };
+  } else if (toolName === 'prepare_dataverse_record_change') {
+    request = {
+      action: 'prepare_mutation',
+      origin: context.origin,
+      mutation: {
+        operation: args.operation === 'create' ? 'create' : 'update',
+        table: stringValue(args.table),
+        recordId: optionalString(args.recordId),
+        values: mutationValueArray(args.values)
+      }
+    };
+  } else if (toolName === 'prepare_marketing_list_membership') {
+    request = {
+      action: 'prepare_list_membership',
+      origin: context.origin,
+      listId: stringValue(args.listId),
+      members: marketingListMemberArray(args.members)
+    };
+  } else {
+    return { ok: false, error: `Unsupported tool: ${toolName}` };
+  }
+
+  return executePrimitiveInActiveTab(context, request);
+}

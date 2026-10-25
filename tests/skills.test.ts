@@ -25,9 +25,7 @@ const customSkill: OddySkill = {
   enabled: true,
   instructions: 'Use the supplied number of days and explain the resulting filter.',
   allowedTools: ['resolve_dataverse_schema', 'manage_dataverse_view', 'navigate_dataverse'],
-  inputs: [
-    { id: 'inactiveDays', label: 'Inactive days', type: 'number', required: true }
-  ],
+  inputs: [{ id: 'inactiveDays', label: 'Inactive days', type: 'number', required: true }],
   steps: [
     { id: 'step-1', instruction: 'Resolve the contact table and modified date column.' },
     { id: 'step-2', instruction: 'Create the filtered AI Result view.' },
@@ -46,7 +44,9 @@ describe('Oddy skills', () => {
       id: 'add-marketing-list-members',
       allowedTools: ['query_dataverse_records', 'prepare_marketing_list_membership']
     });
-    expect(BUILT_IN_SKILLS[1]?.instructions).toContain('one supported Dataverse AddListMembersList action');
+    expect(BUILT_IN_SKILLS[1]?.instructions).toContain(
+      'one supported Dataverse AddListMembersList action'
+    );
   });
 
   it('validates inputs before building skill execution instructions', () => {
@@ -66,7 +66,9 @@ describe('Oddy skills', () => {
   it('exports standard skill metadata and an Oddy workflow', () => {
     const markdown = buildSkillMarkdown(customSkill);
     expect(markdown).toContain('name: review-inactive-contacts');
-    expect(markdown).toContain('allowed-tools: resolve_dataverse_schema manage_dataverse_view navigate_dataverse');
+    expect(markdown).toContain(
+      'allowed-tools: resolve_dataverse_schema manage_dataverse_view navigate_dataverse'
+    );
     expect(buildOddyWorkflow(customSkill)).toEqual(
       expect.objectContaining({
         version: 1,

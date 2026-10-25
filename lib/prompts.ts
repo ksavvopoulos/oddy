@@ -4,7 +4,9 @@ export function filterContextFields(
   context: DataverseContext,
   excludedFields: string[]
 ): DataverseField[] {
-  const excluded = new Set(excludedFields.map((field) => field.trim().toLowerCase()).filter(Boolean));
+  const excluded = new Set(
+    excludedFields.map((field) => field.trim().toLowerCase()).filter(Boolean)
+  );
   return context.fields.filter((field) => !excluded.has(field.logicalName.toLowerCase()));
 }
 

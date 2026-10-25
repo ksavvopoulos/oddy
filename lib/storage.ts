@@ -1,4 +1,5 @@
 import type { ExtensionSettings } from './types';
+import { DEFAULT_HISTORY_LIMITS } from './history-policy';
 
 export const SETTINGS_KEY = 'dataverseCopilot.settings';
 
@@ -25,8 +26,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   },
   conversationHistory: {
     enabled: false,
-    maxConversations: 50,
-    retentionDays: 30
+    ...DEFAULT_HISTORY_LIMITS
   }
 };
 
@@ -67,8 +67,8 @@ export function isAzureOpenAIConfigured(settings: ExtensionSettings): boolean {
   const config = settings.azureOpenAI;
   return Boolean(
     config.endpoint.trim() &&
-      config.deployment.trim() &&
-      config.apiVersion.trim() &&
-      config.apiKey.trim()
+    config.deployment.trim() &&
+    config.apiVersion.trim() &&
+    config.apiKey.trim()
   );
 }

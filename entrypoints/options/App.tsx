@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { pruneConversations } from '../../lib/conversations';
+import { normalizeHistoryLimits } from '../../lib/history-policy';
 import { errorMessage, sendExtensionMessage } from '../../lib/messages';
 import {
   BUILT_IN_SKILLS,
@@ -79,14 +80,7 @@ export function App() {
     },
     conversationHistory: {
       ...settings.conversationHistory,
-      maxConversations: Math.min(
-        Math.max(Math.trunc(settings.conversationHistory.maxConversations || 50), 1),
-        500
-      ),
-      retentionDays: Math.min(
-        Math.max(Math.trunc(settings.conversationHistory.retentionDays || 30), 1),
-        3650
-      )
+      ...normalizeHistoryLimits(settings.conversationHistory)
     }
   });
 
@@ -165,7 +159,9 @@ export function App() {
       const inputs = inputLines.map((line) => skillInputFromParts(line.split('|')));
       const invalidInputIndex = inputs.findIndex((input) => !input);
       if (invalidInputIndex >= 0) {
-        throw new Error(`Input line ${invalidInputIndex + 1} is invalid. Use: id | Label | text, number, or select | options | required or optional.`);
+        throw new Error(
+          `Input line ${invalidInputIndex + 1} is invalid. Use: id | Label | text, number, or select | options | required or optional.`
+        );
       }
 
       const steps = skillDraft.stepsText
@@ -214,14 +210,13 @@ export function App() {
     }
   };
 
-  const downloadSkillFile = (
-    skill: OddySkill,
-    kind: 'markdown' | 'workflow'
-  ) => {
-    const content = kind === 'markdown'
-      ? buildSkillMarkdown(skill)
-      : JSON.stringify(buildOddyWorkflow(skill), null, 2);
-    const filename = kind === 'markdown' ? `${skill.id}.SKILL.md` : `${skill.id}.oddy.workflow.json`;
+  const downloadSkillFile = (skill: OddySkill, kind: 'markdown' | 'workflow') => {
+    const content =
+      kind === 'markdown'
+        ? buildSkillMarkdown(skill)
+        : JSON.stringify(buildOddyWorkflow(skill), null, 2);
+    const filename =
+      kind === 'markdown' ? `${skill.id}.SKILL.md` : `${skill.id}.oddy.workflow.json`;
     const url = URL.createObjectURL(
       new Blob([content], { type: kind === 'markdown' ? 'text/markdown' : 'application/json' })
     );
@@ -290,11 +285,17 @@ export function App() {
                 value={settings.azureOpenAI.apiKey}
                 onChange={(event) => updateAzure('apiKey', event.target.value)}
               />
-              <button type="button" className="text-button" onClick={() => setShowKey((value) => !value)}>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setShowKey((value) => !value)}
+              >
                 {showKey ? 'Hide' : 'Show'}
               </button>
             </div>
-            <small>The key is stored in <code>chrome.storage.local</code> and is never synced.</small>
+            <small>
+              The key is stored in <code>chrome.storage.local</code> and is never synced.
+            </small>
           </label>
 
           <label className="field field-wide">
@@ -344,7 +345,10 @@ export function App() {
           />
           <span>
             <strong>Include record context by default</strong>
-            <small>The side panel previews outbound context. Any proposed business-record create or update receives a separate field-level approval before it can run.</small>
+            <small>
+              The side panel previews outbound context. Any proposed business-record create or
+              update receives a separate field-level approval before it can run.
+            </small>
           </span>
         </label>
 
@@ -376,7 +380,10 @@ export function App() {
             />
             <span>
               <strong>Save conversation history locally</strong>
-              <small>Stores visible messages, tool audits, and approval outcomes in this Chrome profile using IndexedDB. Record-context payloads are not stored separately.</small>
+              <small>
+                Stores visible messages, tool audits, and approval outcomes in this Chrome profile
+                using IndexedDB. Record-context payloads are not stored separately.
+              </small>
             </span>
           </label>
 
@@ -433,7 +440,8 @@ export function App() {
         </div>
 
         <p className="section-copy">
-          Skills combine standard SKILL.md instructions with a restricted Oddy workflow. They can only use selected Dataverse tools, and record writes still require explicit approval.
+          Skills combine standard SKILL.md instructions with a restricted Oddy workflow. They can
+          only use selected Dataverse tools, and record writes still require explicit approval.
         </p>
 
         <label className="toggle-row skill-management-toggle">
@@ -452,7 +460,10 @@ export function App() {
           />
           <span>
             <strong>Allow Oddy to prepare custom skill changes by default</strong>
-            <small>Oddy may inspect custom skills and prepare create, update, or delete previews. Nothing changes until you approve it in the side panel.</small>
+            <small>
+              Oddy may inspect custom skills and prepare create, update, or delete previews. Nothing
+              changes until you approve it in the side panel.
+            </small>
           </span>
         </label>
 
@@ -562,17 +573,24 @@ export function App() {
               <span>Inputs</span>
               <textarea
                 rows={4}
-                placeholder={'table | Table name | text | | required\ndays | Inactive days | number | | required\nstatus | Status | select | active, inactive | optional'}
+                placeholder={
+                  'table | Table name | text | | required\ndays | Inactive days | number | | required\nstatus | Status | select | active, inactive | optional'
+                }
                 value={skillDraft.inputsText}
                 onChange={(event) => updateSkillDraft('inputsText', event.target.value)}
               />
-              <small>One input per line: ID | Label | text, number, or select | comma-separated options | required or optional.</small>
+              <small>
+                One input per line: ID | Label | text, number, or select | comma-separated options |
+                required or optional.
+              </small>
             </label>
             <label className="field field-wide">
               <span>Workflow steps</span>
               <textarea
                 rows={5}
-                placeholder={'Resolve the requested table and columns.\nQuery records using the supplied inputs.\nCreate or update AI Result.\nNavigate to the resulting view.'}
+                placeholder={
+                  'Resolve the requested table and columns.\nQuery records using the supplied inputs.\nCreate or update AI Result.\nNavigate to the resulting view.'
+                }
                 value={skillDraft.stepsText}
                 onChange={(event) => updateSkillDraft('stepsText', event.target.value)}
               />
@@ -620,8 +638,8 @@ export function App() {
       <aside className="security-note">
         <strong>Security note</strong>
         <p>
-          API keys inside browser extensions cannot be treated as fully secret. For team or production use,
-          route requests through an authenticated backend using Microsoft Entra ID.
+          API keys inside browser extensions cannot be treated as fully secret. For team or
+          production use, route requests through an authenticated backend using Microsoft Entra ID.
         </p>
       </aside>
     </main>

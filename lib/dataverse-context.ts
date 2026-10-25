@@ -1,8 +1,4 @@
-import type {
-  DataverseContext,
-  DataverseContextSource,
-  DataverseField
-} from './types';
+import type { DataverseContext, DataverseContextSource, DataverseField } from './types';
 
 export interface PageContextSnapshot {
   source?: DataverseContextSource;
@@ -234,7 +230,9 @@ export async function collectDataverseWebApiContext(
     });
     if (!metadataResponse.ok) {
       const detail = (await metadataResponse.text()).slice(0, 500);
-      throw new Error(`Metadata request failed (${metadataResponse.status}): ${detail || metadataResponse.statusText}`);
+      throw new Error(
+        `Metadata request failed (${metadataResponse.status}): ${detail || metadataResponse.statusText}`
+      );
     }
 
     const metadata = (await metadataResponse.json()) as {
@@ -256,7 +254,9 @@ export async function collectDataverseWebApiContext(
     });
     if (!recordResponse.ok) {
       const detail = (await recordResponse.text()).slice(0, 500);
-      throw new Error(`Record request failed (${recordResponse.status}): ${detail || recordResponse.statusText}`);
+      throw new Error(
+        `Record request failed (${recordResponse.status}): ${detail || recordResponse.statusText}`
+      );
     }
 
     const record = (await recordResponse.json()) as Record<string, unknown>;
@@ -264,12 +264,8 @@ export async function collectDataverseWebApiContext(
       .filter(([key, value]) => !key.includes('@') && value != null)
       .slice(0, 150)
       .map(([logicalName, value]) => {
-        const formattedValue = record[
-          `${logicalName}@OData.Community.Display.V1.FormattedValue`
-        ];
-        const lookupType = record[
-          `${logicalName}@Microsoft.Dynamics.CRM.lookuplogicalname`
-        ];
+        const formattedValue = record[`${logicalName}@OData.Community.Display.V1.FormattedValue`];
+        const lookupType = record[`${logicalName}@Microsoft.Dynamics.CRM.lookuplogicalname`];
 
         return {
           logicalName,

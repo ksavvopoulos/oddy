@@ -33,7 +33,7 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 
 ## Development
 
-Requirements: Node.js 20+ and Chrome 116+.
+Requirements: Node.js 22 recommended (20 also supported) and Chrome 116+.
 
 ```bash
 npm install
@@ -43,9 +43,7 @@ npm run dev
 For a production build:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run check
 ```
 
 The unpacked extension is generated at:
@@ -115,21 +113,35 @@ The extension:
 
 ```text
 entrypoints/
-  background.ts          Azure OpenAI calls and active-tab inspection
-  content.ts             Detects model-driven app navigation
-  options/                Azure OpenAI and privacy settings
-  sidepanel/              Main assistant interface
+  background.ts           Chrome listeners and message routing
+  content.ts              Detects model-driven app navigation
+  options/                Azure OpenAI, privacy, history, and skill settings
+  sidepanel/              UI composition, transcript cards, approval adapters
 lib/
+  assistant/              Tool catalog, argument parsing, dispatch, audits, model loop
+  browser/                Active-tab context, navigation, injection, refresh
+  dataverse/              Primitive request/result and metadata contracts
+  dataverse-primitives.ts Self-contained signed-session page executor
+  approvals.ts            Shared approval rules and synchronous execution lock
+  conversation-model.ts   Transcript contracts, restoration, authoritative history
+  conversations.ts        IndexedDB repository and atomic save/pruning
+  history-policy.ts       Shared retention/default/limit policy
   azure-openai.ts         Provider adapter
-  conversations.ts        Local IndexedDB conversation history and retention
-  dataverse-context.ts    URL, Xrm, and Dataverse Web API context extraction
-  dataverse-primitives.ts Shared structured schema/query/relationship/view/mutation and list-membership executor
+  dataverse-context.ts    URL, Xrm, and Web API context extraction
   prompts.ts              Prompt/context construction
-  skills.ts               Bundled and user-created skill definitions, validation, storage, and export
+  skills.ts               Built-in and custom workflows, validation/storage/export
   storage.ts              Local settings storage
-  types.ts                Shared contracts
-tests/                    Unit tests
+  types.ts                Shared extension contracts
+tests/                    Unit, boundary, rendering, and IndexedDB tests
 ```
+
+See [Architecture and contributor guide](docs/architecture.md) for execution boundaries, the tool-extension checklist, test seams, and manual smoke tests.
+
+Development commands:
+
+- `npm run test:watch` — fast feedback while changing one area
+- `npm run format` — consistent TypeScript/JSX, documentation, and config formatting
+- `npm run check` — run formatting, strict typecheck, tests, and the production build locally before pushing
 
 ## Current limitations
 

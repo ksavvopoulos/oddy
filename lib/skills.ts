@@ -10,56 +10,10 @@ import type {
 
 export const SKILLS_KEY = 'oddy.skills';
 
-export const SKILL_TOOL_OPTIONS: Array<{
-  name: OddySkillToolName;
-  label: string;
-  description: string;
-}> = [
-  {
-    name: 'resolve_dataverse_schema',
-    label: 'Resolve schema',
-    description: 'Resolve table and column names.'
-  },
-  {
-    name: 'query_dataverse_records',
-    label: 'Query records',
-    description: 'Run structured, read-only Dataverse queries.'
-  },
-  {
-    name: 'discover_dataverse_relationships',
-    label: 'Discover relationships',
-    description: 'Inspect direct table relationships.'
-  },
-  {
-    name: 'manage_dataverse_view',
-    label: 'Manage AI Result view',
-    description: 'Read or update the managed personal view.'
-  },
-  {
-    name: 'execute_dataverse_view',
-    label: 'Execute AI Result view',
-    description: 'Read records from the managed personal view.'
-  },
-  {
-    name: 'prepare_dataverse_record_change',
-    label: 'Prepare record change',
-    description: 'Prepare a create or update proposal that requires approval.'
-  },
-  {
-    name: 'prepare_marketing_list_membership',
-    label: 'Prepare marketing-list members',
-    description: 'Prepare one bulk AddListMembersList proposal that requires approval.'
-  },
-  {
-    name: 'navigate_dataverse',
-    label: 'Navigate Dataverse',
-    description: 'Open a list, view, or record in the active tab.'
-  }
-];
+export { SKILL_TOOL_OPTIONS } from './assistant/tool-catalog';
+import { SKILL_TOOL_OPTIONS } from './assistant/tool-catalog';
 
-const SKILL_TOOL_NAMES = new Set<OddySkillToolName>(
-  SKILL_TOOL_OPTIONS.map((tool) => tool.name)
-);
+const SKILL_TOOL_NAMES = new Set<OddySkillToolName>(SKILL_TOOL_OPTIONS.map((tool) => tool.name));
 
 export const BUILT_IN_SKILLS: OddySkill[] = [
   {
@@ -194,12 +148,15 @@ export function validateSkill(skill: OddySkill): string[] {
   if (!skill.name.trim()) errors.push('Skill name is required.');
   if (skill.name.length > 100) errors.push('Skill name must be 100 characters or fewer.');
   if (!skill.description.trim()) errors.push('Skill description is required.');
-  if (skill.description.length > 1024) errors.push('Skill description must be 1,024 characters or fewer.');
+  if (skill.description.length > 1024)
+    errors.push('Skill description must be 1,024 characters or fewer.');
   if (!skill.instructions.trim()) errors.push('Skill instructions are required.');
-  if (skill.instructions.length > 10_000) errors.push('Skill instructions must be 10,000 characters or fewer.');
+  if (skill.instructions.length > 10_000)
+    errors.push('Skill instructions must be 10,000 characters or fewer.');
   if (!skill.version.trim()) errors.push('Skill version is required.');
   if (skill.allowedTools.length === 0) errors.push('Select at least one allowed tool.');
-  if (skill.allowedTools.length > SKILL_TOOL_OPTIONS.length) errors.push('Too many allowed tools were supplied.');
+  if (skill.allowedTools.length > SKILL_TOOL_OPTIONS.length)
+    errors.push('Too many allowed tools were supplied.');
   if (skill.allowedTools.some((tool) => !SKILL_TOOL_NAMES.has(tool))) {
     errors.push('The skill contains an unsupported tool.');
   }
@@ -253,19 +210,14 @@ export function validateSkillRunInputs(
   return errors;
 }
 
-export function buildSkillExecutionInstruction(
-  skill: OddySkill,
-  run: OddySkillRun
-): string {
+export function buildSkillExecutionInstruction(skill: OddySkill, run: OddySkillRun): string {
   const inputErrors = validateSkillRunInputs(skill, run.inputValues);
   if (inputErrors.length) throw new Error(inputErrors.join(' '));
 
   const suppliedInputs = Object.fromEntries(
     skill.inputs.map((input) => [input.id, run.inputValues[input.id]?.trim() || ''])
   );
-  const steps = skill.steps
-    .map((step, index) => `${index + 1}. ${step.instruction}`)
-    .join('\n');
+  const steps = skill.steps.map((step, index) => `${index + 1}. ${step.instruction}`).join('\n');
 
   return (
     `Active Oddy skill: ${skill.name} (${skill.id}, version ${skill.version}).\n` +
@@ -336,9 +288,7 @@ export async function prepareOddySkillChange(input: {
   baseRevision?: string;
 }): Promise<PreparedOddySkillChange> {
   const skills = await getUserSkills();
-  const current = input.skillId
-    ? skills.find((skill) => skill.id === input.skillId)
-    : undefined;
+  const current = input.skillId ? skills.find((skill) => skill.id === input.skillId) : undefined;
 
   if (input.operation === 'delete') {
     if (!current) throw new Error('The custom skill to delete was not found.');
@@ -365,9 +315,10 @@ export async function prepareOddySkillChange(input: {
     throw new Error('Read the full current skill before preparing its update.');
   }
 
-  const skillId = input.operation === 'create'
-    ? uniqueSkillId(input.skill.id || input.skill.name, skills)
-    : current!.id;
+  const skillId =
+    input.operation === 'create'
+      ? uniqueSkillId(input.skill.id || input.skill.name, skills)
+      : current!.id;
   const after: OddySkill = {
     ...input.skill,
     id: skillId,
@@ -411,7 +362,9 @@ export async function executeOddySkillChange(
 
   if (!current) throw new Error('The custom skill no longer exists.');
   if (!change.baseRevision || skillRevision(current) !== change.baseRevision) {
-    throw new Error('This skill changed after the preview was prepared. Ask Oddy for a fresh preview.');
+    throw new Error(
+      'This skill changed after the preview was prepared. Ask Oddy for a fresh preview.'
+    );
   }
 
   if (change.operation === 'delete') {
@@ -466,7 +419,10 @@ export function skillInputFromParts(parts: string[]): OddySkillInput | undefined
   const label = rawLabel?.trim() || '';
   const type = rawType.trim().toLowerCase();
   if (!id || !label || !['text', 'number', 'select'].includes(type)) return undefined;
-  const options = rawOptions.split(',').map((option) => option.trim()).filter(Boolean);
+  const options = rawOptions
+    .split(',')
+    .map((option) => option.trim())
+    .filter(Boolean);
   return {
     id,
     label,

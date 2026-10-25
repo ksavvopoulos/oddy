@@ -43,9 +43,7 @@ describe('Dataverse structured primitives', () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            value: [
-              { LogicalName: 'new_registrationstoreid', Targets: ['account'] }
-            ]
+            value: [{ LogicalName: 'new_registrationstoreid', Targets: ['account'] }]
           }),
           { status: 200 }
         )
@@ -415,28 +413,56 @@ describe('Dataverse structured primitives', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          LogicalName: 'contact',
-          EntitySetName: 'contacts',
-          PrimaryIdAttribute: 'contactid',
-          PrimaryNameAttribute: 'fullname',
-          DisplayName: { UserLocalizedLabel: { Label: 'Contact' } }
-        }), { status: 200 })
+        new Response(
+          JSON.stringify({
+            LogicalName: 'contact',
+            EntitySetName: 'contacts',
+            PrimaryIdAttribute: 'contactid',
+            PrimaryNameAttribute: 'fullname',
+            DisplayName: { UserLocalizedLabel: { Label: 'Contact' } }
+          }),
+          { status: 200 }
+        )
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ value: [
-          { LogicalName: 'fullname', AttributeType: 'String', IsValidForRead: true, IsValidForUpdate: true },
-          { LogicalName: 'address1_line1', AttributeType: 'String', IsValidForRead: true, IsValidForUpdate: true, DisplayName: { UserLocalizedLabel: { Label: 'Street 1' } } },
-          { LogicalName: 'address1_city', AttributeType: 'String', IsValidForRead: true, IsValidForUpdate: true, DisplayName: { UserLocalizedLabel: { Label: 'City' } } }
-        ] }), { status: 200 })
+        new Response(
+          JSON.stringify({
+            value: [
+              {
+                LogicalName: 'fullname',
+                AttributeType: 'String',
+                IsValidForRead: true,
+                IsValidForUpdate: true
+              },
+              {
+                LogicalName: 'address1_line1',
+                AttributeType: 'String',
+                IsValidForRead: true,
+                IsValidForUpdate: true,
+                DisplayName: { UserLocalizedLabel: { Label: 'Street 1' } }
+              },
+              {
+                LogicalName: 'address1_city',
+                AttributeType: 'String',
+                IsValidForRead: true,
+                IsValidForUpdate: true,
+                DisplayName: { UserLocalizedLabel: { Label: 'City' } }
+              }
+            ]
+          }),
+          { status: 200 }
+        )
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          '@odata.etag': 'W/"42"',
-          fullname: 'Linda Cook',
-          address1_line1: 'Old Street',
-          address1_city: 'Athens'
-        }), { status: 200 })
+        new Response(
+          JSON.stringify({
+            '@odata.etag': 'W/"42"',
+            fullname: 'Linda Cook',
+            address1_line1: 'Old Street',
+            address1_city: 'Athens'
+          }),
+          { status: 200 }
+        )
       );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -455,37 +481,67 @@ describe('Dataverse structured primitives', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.mutation).toEqual(expect.objectContaining({
-      operation: 'update',
-      environmentOrigin: 'https://contoso.crm.dynamics.com',
-      tableLogicalName: 'contact',
-      recordName: 'Linda Cook',
-      etag: 'W/"42"'
-    }));
+    expect(result.mutation).toEqual(
+      expect.objectContaining({
+        operation: 'update',
+        environmentOrigin: 'https://contoso.crm.dynamics.com',
+        tableLogicalName: 'contact',
+        recordName: 'Linda Cook',
+        etag: 'W/"42"'
+      })
+    );
     expect(result.mutation?.fields).toEqual([
-      expect.objectContaining({ logicalName: 'address1_line1', currentValue: 'Old Street', proposedValue: 'Papaflessa 13' }),
-      expect.objectContaining({ logicalName: 'address1_city', currentValue: 'Athens', proposedValue: 'Patra' })
+      expect.objectContaining({
+        logicalName: 'address1_line1',
+        currentValue: 'Old Street',
+        proposedValue: 'Papaflessa 13'
+      }),
+      expect.objectContaining({
+        logicalName: 'address1_city',
+        currentValue: 'Athens',
+        proposedValue: 'Patra'
+      })
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls.every((call) => !['PATCH', 'POST'].includes(String(call[1]?.method)))).toBe(true);
+    expect(
+      fetchMock.mock.calls.every((call) => !['PATCH', 'POST'].includes(String(call[1]?.method)))
+    ).toBe(true);
   });
 
   it('applies only approved update fields with optimistic concurrency', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          LogicalName: 'contact',
-          EntitySetName: 'contacts',
-          PrimaryIdAttribute: 'contactid',
-          PrimaryNameAttribute: 'fullname'
-        }), { status: 200 })
+        new Response(
+          JSON.stringify({
+            LogicalName: 'contact',
+            EntitySetName: 'contacts',
+            PrimaryIdAttribute: 'contactid',
+            PrimaryNameAttribute: 'fullname'
+          }),
+          { status: 200 }
+        )
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ value: [
-          { LogicalName: 'address1_line1', AttributeType: 'String', IsValidForRead: true, IsValidForUpdate: true },
-          { LogicalName: 'address1_city', AttributeType: 'String', IsValidForRead: true, IsValidForUpdate: true }
-        ] }), { status: 200 })
+        new Response(
+          JSON.stringify({
+            value: [
+              {
+                LogicalName: 'address1_line1',
+                AttributeType: 'String',
+                IsValidForRead: true,
+                IsValidForUpdate: true
+              },
+              {
+                LogicalName: 'address1_city',
+                AttributeType: 'String',
+                IsValidForRead: true,
+                IsValidForUpdate: true
+              }
+            ]
+          }),
+          { status: 200 }
+        )
       )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -502,7 +558,11 @@ describe('Dataverse structured primitives', () => {
         recordName: 'Linda Cook',
         etag: 'W/"42"',
         fields: [
-          { requestedName: 'Street 1', logicalName: 'address1_line1', proposedValue: 'Papaflessa 13' },
+          {
+            requestedName: 'Street 1',
+            logicalName: 'address1_line1',
+            proposedValue: 'Papaflessa 13'
+          },
           { requestedName: 'City', logicalName: 'address1_city', proposedValue: 'Patra' }
         ]
       },
@@ -512,8 +572,12 @@ describe('Dataverse structured primitives', () => {
     expect(result.ok).toBe(true);
     expect(result.mutationResult?.changedColumns).toEqual(['address1_city']);
     expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('PATCH');
-    expect(fetchMock.mock.calls[2]?.[1]?.headers).toEqual(expect.objectContaining({ 'If-Match': 'W/"42"' }));
-    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ address1_city: 'Patra' });
+    expect(fetchMock.mock.calls[2]?.[1]?.headers).toEqual(
+      expect.objectContaining({ 'If-Match': 'W/"42"' })
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      address1_city: 'Patra'
+    });
   });
 
   it('resolves a Choice label to its numeric Dataverse option value', async () => {
@@ -525,8 +589,19 @@ describe('Dataverse structured primitives', () => {
     };
     const attributes = {
       value: [
-        { LogicalName: 'sieben_name', AttributeType: 'String', IsValidForRead: true, IsValidForCreate: true },
-        { LogicalName: 'sieben_sendmethod', AttributeType: 'Picklist', IsValidForRead: true, IsValidForCreate: true, DisplayName: { UserLocalizedLabel: { Label: 'Send Method' } } }
+        {
+          LogicalName: 'sieben_name',
+          AttributeType: 'String',
+          IsValidForRead: true,
+          IsValidForCreate: true
+        },
+        {
+          LogicalName: 'sieben_sendmethod',
+          AttributeType: 'Picklist',
+          IsValidForRead: true,
+          IsValidForCreate: true,
+          DisplayName: { UserLocalizedLabel: { Label: 'Send Method' } }
+        }
       ]
     };
     const optionMetadata = {
@@ -545,10 +620,15 @@ describe('Dataverse structured primitives', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(entityMetadata), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(attributes), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(optionMetadata), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        sieben_scenariosid: '00000000-0000-0000-0000-000000000030',
-        sieben_name: 'oddy3'
-      }), { status: 201 }));
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            sieben_scenariosid: '00000000-0000-0000-0000-000000000030',
+            sieben_name: 'oddy3'
+          }),
+          { status: 201 }
+        )
+      );
     vi.stubGlobal('fetch', fetchMock);
 
     const preview = await executeDataversePrimitive({
@@ -565,11 +645,13 @@ describe('Dataverse structured primitives', () => {
     });
 
     expect(preview.ok).toBe(true);
-    expect(preview.mutation?.fields[1]).toEqual(expect.objectContaining({
-      logicalName: 'sieben_sendmethod',
-      proposedValue: 100000000,
-      proposedFormattedValue: 'Email'
-    }));
+    expect(preview.mutation?.fields[1]).toEqual(
+      expect.objectContaining({
+        logicalName: 'sieben_sendmethod',
+        proposedValue: 100000000,
+        proposedFormattedValue: 'Email'
+      })
+    );
 
     const applied = await executeDataversePrimitive({
       action: 'execute_mutation',
@@ -675,10 +757,12 @@ describe('Dataverse structured primitives', () => {
     });
 
     expect(preview.ok).toBe(true);
-    expect(preview.listMembership).toEqual(expect.objectContaining({
-      listName: 'oddy test',
-      memberTableLogicalName: 'contact'
-    }));
+    expect(preview.listMembership).toEqual(
+      expect.objectContaining({
+        listName: 'oddy test',
+        memberTableLogicalName: 'contact'
+      })
+    );
     expect(preview.listMembership?.members.map((member) => member.recordName)).toEqual([
       'Ada Lovelace',
       'Grace Hopper'
@@ -694,7 +778,9 @@ describe('Dataverse structured primitives', () => {
     expect(applied.ok).toBe(true);
     expect(applied.listMembershipResult?.addedMemberIds).toHaveLength(2);
     // Both preparation and approval-time revalidation must negotiate XML.
-    const metadataCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/$metadata'));
+    const metadataCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith('/$metadata')
+    );
     expect(metadataCalls).toHaveLength(2);
     for (const [, options] of metadataCalls) {
       const requestHeaders = new Headers(options?.headers);
@@ -703,7 +789,9 @@ describe('Dataverse structured primitives', () => {
       expect(requestHeaders.get('OData-Version')).toBe('4.0');
       expect(options?.credentials).toBe('include');
     }
-    expect(new Headers(fetchMock.mock.calls[18]?.[1]?.headers).get('Accept')).toBe('application/json');
+    expect(new Headers(fetchMock.mock.calls[18]?.[1]?.headers).get('Accept')).toBe(
+      'application/json'
+    );
     expect(fetchMock.mock.calls[18]?.[0]).toBe(
       'https://contoso.crm.dynamics.com/api/data/v9.2/AddListMembersList'
     );
@@ -728,25 +816,40 @@ describe('Dataverse structured primitives', () => {
   it('rejects manual membership preparation for a dynamic marketing list', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        LogicalName: 'list',
-        EntitySetName: 'lists',
-        PrimaryIdAttribute: 'listid',
-        PrimaryNameAttribute: 'listname'
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        value: [
-          { LogicalName: 'listname', AttributeType: 'String', IsValidForRead: true },
-          { LogicalName: 'type', AttributeType: 'Boolean', IsValidForRead: true },
-          { LogicalName: 'createdfromcode', AttributeType: 'Picklist', IsValidForRead: true }
-        ]
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        listid: '07c003e9-58d0-f111-a05c-000d3a285a7f',
-        listname: 'Dynamic list',
-        type: true,
-        createdfromcode: 2
-      }), { status: 200 }));
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            LogicalName: 'list',
+            EntitySetName: 'lists',
+            PrimaryIdAttribute: 'listid',
+            PrimaryNameAttribute: 'listname'
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [
+              { LogicalName: 'listname', AttributeType: 'String', IsValidForRead: true },
+              { LogicalName: 'type', AttributeType: 'Boolean', IsValidForRead: true },
+              { LogicalName: 'createdfromcode', AttributeType: 'Picklist', IsValidForRead: true }
+            ]
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            listid: '07c003e9-58d0-f111-a05c-000d3a285a7f',
+            listname: 'Dynamic list',
+            type: true,
+            createdfromcode: 2
+          }),
+          { status: 200 }
+        )
+      );
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await executeDataversePrimitive({
@@ -769,8 +872,19 @@ describe('Dataverse structured primitives', () => {
     };
     const sourceAttributes = {
       value: [
-        { LogicalName: 'sieben_name', AttributeType: 'String', IsValidForRead: true, IsValidForCreate: true },
-        { LogicalName: 'sieben_sender', AttributeType: 'Lookup', IsValidForRead: true, IsValidForCreate: true, DisplayName: { UserLocalizedLabel: { Label: 'Sender' } } }
+        {
+          LogicalName: 'sieben_name',
+          AttributeType: 'String',
+          IsValidForRead: true,
+          IsValidForCreate: true
+        },
+        {
+          LogicalName: 'sieben_sender',
+          AttributeType: 'Lookup',
+          IsValidForRead: true,
+          IsValidForCreate: true,
+          DisplayName: { UserLocalizedLabel: { Label: 'Sender' } }
+        }
       ]
     };
     const targetEntity = {
@@ -783,13 +897,15 @@ describe('Dataverse structured primitives', () => {
       value: [{ LogicalName: 'sieben_sender', Targets: ['sieben_senderaccount'] }]
     };
     const relationship = {
-      value: [{
-        SchemaName: 'sieben_senderaccount_scenarios',
-        ReferencedEntity: 'sieben_senderaccount',
-        ReferencingEntity: 'sieben_scenarios',
-        ReferencingAttribute: 'sieben_sender',
-        ReferencingEntityNavigationPropertyName: 'sieben_Sender'
-      }]
+      value: [
+        {
+          SchemaName: 'sieben_senderaccount_scenarios',
+          ReferencedEntity: 'sieben_senderaccount',
+          ReferencingEntity: 'sieben_scenarios',
+          ReferencingAttribute: 'sieben_sender',
+          ReferencingEntityNavigationPropertyName: 'sieben_Sender'
+        }
+      ]
     };
     const senderId = '00000000-0000-0000-0000-000000000020';
     const scenarioId = '00000000-0000-0000-0000-000000000021';
@@ -800,14 +916,28 @@ describe('Dataverse structured primitives', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(targetEntity), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(lookupTargets), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(relationship), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ sieben_senderaccountid: senderId, sieben_name: 'testEmail' }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ sieben_senderaccountid: senderId, sieben_name: 'testEmail' }),
+          { status: 200 }
+        )
+      )
       .mockResolvedValueOnce(new Response(JSON.stringify(sourceEntity), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(sourceAttributes), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(targetEntity), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(lookupTargets), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(relationship), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ sieben_senderaccountid: senderId, sieben_name: 'testEmail' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ sieben_scenariosid: scenarioId, sieben_name: 'oddy3' }), { status: 201 }));
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ sieben_senderaccountid: senderId, sieben_name: 'testEmail' }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ sieben_scenariosid: scenarioId, sieben_name: 'oddy3' }), {
+          status: 201
+        })
+      );
     vi.stubGlobal('fetch', fetchMock);
 
     const preview = await executeDataversePrimitive({
@@ -831,14 +961,16 @@ describe('Dataverse structured primitives', () => {
     });
 
     expect(preview.ok).toBe(true);
-    expect(preview.mutation?.fields[1]).toEqual(expect.objectContaining({
-      logicalName: 'sieben_sender',
-      proposedValue: expect.objectContaining({ recordId: senderId, recordName: 'testEmail' }),
-      lookup: expect.objectContaining({
-        tableLogicalName: 'sieben_senderaccount',
-        navigationPropertyName: 'sieben_Sender'
+    expect(preview.mutation?.fields[1]).toEqual(
+      expect.objectContaining({
+        logicalName: 'sieben_sender',
+        proposedValue: expect.objectContaining({ recordId: senderId, recordName: 'testEmail' }),
+        lookup: expect.objectContaining({
+          tableLogicalName: 'sieben_senderaccount',
+          navigationPropertyName: 'sieben_Sender'
+        })
       })
-    }));
+    );
 
     const applied = await executeDataversePrimitive({
       action: 'execute_mutation',
@@ -858,24 +990,45 @@ describe('Dataverse structured primitives', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          LogicalName: 'contact',
-          EntitySetName: 'contacts',
-          PrimaryIdAttribute: 'contactid',
-          PrimaryNameAttribute: 'fullname'
-        }), { status: 200 })
+        new Response(
+          JSON.stringify({
+            LogicalName: 'contact',
+            EntitySetName: 'contacts',
+            PrimaryIdAttribute: 'contactid',
+            PrimaryNameAttribute: 'fullname'
+          }),
+          { status: 200 }
+        )
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ value: [
-          { LogicalName: 'firstname', AttributeType: 'String', IsValidForRead: true, IsValidForCreate: true },
-          { LogicalName: 'lastname', AttributeType: 'String', IsValidForRead: true, IsValidForCreate: true }
-        ] }), { status: 200 })
+        new Response(
+          JSON.stringify({
+            value: [
+              {
+                LogicalName: 'firstname',
+                AttributeType: 'String',
+                IsValidForRead: true,
+                IsValidForCreate: true
+              },
+              {
+                LogicalName: 'lastname',
+                AttributeType: 'String',
+                IsValidForRead: true,
+                IsValidForCreate: true
+              }
+            ]
+          }),
+          { status: 200 }
+        )
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          contactid: '00000000-0000-0000-0000-000000000002',
-          fullname: 'Ada Lovelace'
-        }), { status: 201 })
+        new Response(
+          JSON.stringify({
+            contactid: '00000000-0000-0000-0000-000000000002',
+            fullname: 'Ada Lovelace'
+          }),
+          { status: 201 }
+        )
       );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -897,11 +1050,13 @@ describe('Dataverse structured primitives', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.mutationResult).toEqual(expect.objectContaining({
-      operation: 'create',
-      recordId: '00000000-0000-0000-0000-000000000002',
-      recordName: 'Ada Lovelace'
-    }));
+    expect(result.mutationResult).toEqual(
+      expect.objectContaining({
+        operation: 'create',
+        recordId: '00000000-0000-0000-0000-000000000002',
+        recordName: 'Ada Lovelace'
+      })
+    );
     expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('POST');
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
       firstname: 'Ada',
