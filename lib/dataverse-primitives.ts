@@ -1,8 +1,13 @@
 import type {
+  DataverseActionSignature,
   DataverseMutationExecutionResult,
   DataverseMutationInput,
+  MarketingListMemberInput,
+  MarketingListMembershipExecutionResult,
   PreparedDataverseMutation,
-  PreparedDataverseMutationField
+  PreparedDataverseMutationField,
+  PreparedMarketingListMembership,
+  PreparedMarketingListMember
 } from './types';
 
 export type DataverseFilterOperator =
@@ -86,6 +91,18 @@ export type DataversePrimitiveRequest =
       origin: string;
       mutation: PreparedDataverseMutation;
       selectedColumns: string[];
+    }
+  | {
+      action: 'prepare_list_membership';
+      origin: string;
+      listId: string;
+      members: MarketingListMemberInput[];
+    }
+  | {
+      action: 'execute_list_membership';
+      origin: string;
+      membership: PreparedMarketingListMembership;
+      selectedMemberIds: string[];
     };
 
 export interface ResolvedDataverseEntity {
@@ -103,6 +120,7 @@ export interface ResolvedDataverseColumn {
   logicalName: string;
   displayName?: string;
   attributeType?: string;
+  targets?: string[];
 }
 
 export interface DataverseRelationship {
@@ -137,6 +155,8 @@ export interface DataversePrimitiveResult {
   };
   mutation?: PreparedDataverseMutation;
   mutationResult?: DataverseMutationExecutionResult;
+  listMembership?: PreparedMarketingListMembership;
+  listMembershipResult?: MarketingListMembershipExecutionResult;
   warnings?: string[];
   error?: string;
 }
@@ -164,6 +184,18 @@ export async function executeDataversePrimitive(
     IsValidForCreate?: boolean;
     IsValidForUpdate?: boolean;
     DisplayName?: { UserLocalizedLabel?: { Label?: string } };
+  };
+  type LookupAttributeMetadata = {
+    LogicalName?: string;
+    Targets?: string[];
+  };
+  type ChoiceAttributeMetadata = {
+    OptionSet?: {
+      Options?: Array<{
+        Value?: number;
+        Label?: { UserLocalizedLabel?: { Label?: string } };
+      }>;
+    };
   };
   type RelationshipMetadata = {
     SchemaName?: string;
@@ -319,6 +351,76 @@ export async function executeDataversePrimitive(
     );
   };
 
+  const getLookupTargets = async (
+    entity: ResolvedDataverseEntity
+  ): Promise<Map<string, string[]>> => {
+    const url =
+      `${request.origin}/api/data/v9.2/EntityDefinitions(LogicalName='${entity.logicalName}')/Attributes/` +
+      'Microsoft.Dynamics.CRM.LookupAttributeMetadata?$select=LogicalName,Targets';
+    const payload = await getJson<{ value?: LookupAttributeMetadata[] }>(url);
+    return new Map(
+      (payload.value || [])
+        .filter((attribute) => attribute.LogicalName)
+        .map((attribute) => [attribute.LogicalName as string, attribute.Targets || []])
+    );
+  };
+
+  const getChoiceOptions = async (
+    entity: ResolvedDataverseEntity,
+    column: ResolvedDataverseColumn
+  ): Promise<Array<{ value: number; label: string }>> => {
+    const metadataType = column.attributeType === 'State'
+      ? 'StateAttributeMetadata'
+      : column.attributeType === 'Status'
+        ? 'StatusAttributeMetadata'
+        : 'PicklistAttributeMetadata';
+    const url =
+      `${request.origin}/api/data/v9.2/EntityDefinitions(LogicalName='${entity.logicalName}')/` +
+      `Attributes(LogicalName='${column.logicalName}')/Microsoft.Dynamics.CRM.${metadataType}` +
+      '?$select=LogicalName&$expand=OptionSet';
+    const payload = await getJson<ChoiceAttributeMetadata>(url);
+    return (payload.OptionSet?.Options || [])
+      .filter((option): option is NonNullable<typeof option> & { Value: number } =>
+        typeof option.Value === 'number'
+      )
+      .map((option) => ({
+        value: option.Value,
+        label: option.Label?.UserLocalizedLabel?.Label || String(option.Value)
+      }));
+  };
+
+  const resolveChoiceValue = async (
+    entity: ResolvedDataverseEntity,
+    column: ResolvedDataverseColumn,
+    proposedValue: unknown
+  ): Promise<{ value: number; label: string }> => {
+    const options = await getChoiceOptions(entity, column);
+    if (!options.length) {
+      throw new Error(`No Dataverse options were returned for ${column.displayName || column.logicalName}.`);
+    }
+    const numericValue = typeof proposedValue === 'number'
+      ? proposedValue
+      : typeof proposedValue === 'string' && /^-?\d+$/.test(proposedValue.trim())
+        ? Number(proposedValue.trim())
+        : undefined;
+    const match = numericValue !== undefined
+      ? options.find((option) => option.value === numericValue)
+      : typeof proposedValue === 'string'
+        ? options.find(
+            (option) => option.label.trim().toLowerCase() === proposedValue.trim().toLowerCase()
+          )
+        : undefined;
+    if (!match) {
+      throw new Error(
+        `${formatChoiceInput(proposedValue)} is not a valid option for ${column.displayName || column.logicalName}. Valid options: ${options.map((option) => `${option.label} (${option.value})`).join(', ')}.`
+      );
+    }
+    return match;
+  };
+
+  const formatChoiceInput = (value: unknown): string =>
+    typeof value === 'string' ? `“${value}”` : String(value);
+
   const resolveColumn = (
     requestedName: string,
     attributes: AttributeMetadata[]
@@ -341,6 +443,76 @@ export async function executeDataversePrimitive(
       logicalName: attribute.LogicalName,
       displayName: attribute.DisplayName?.UserLocalizedLabel?.Label,
       attributeType: attribute.AttributeType
+    };
+  };
+
+  const resolveLookupReference = async (
+    entity: ResolvedDataverseEntity,
+    column: ResolvedDataverseColumn,
+    lookup: { table: string; recordId: string; recordName?: string }
+  ): Promise<{
+    tableLogicalName: string;
+    entitySetName: string;
+    recordId: string;
+    recordName?: string;
+    navigationPropertyName: string;
+  }> => {
+    const recordId = lookup.recordId.replace(/[{}]/g, '').trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(recordId)) {
+      throw new Error(`A valid target record GUID is required for ${column.displayName || column.logicalName}.`);
+    }
+    const target = await resolveEntity(lookup.table);
+    const lookupTargets = await getLookupTargets(entity);
+    const allowedTargets = lookupTargets.get(column.logicalName) || [];
+    if (allowedTargets.length && !allowedTargets.includes(target.logicalName)) {
+      throw new Error(
+        `${column.displayName || column.logicalName} cannot reference ${target.displayName || target.logicalName}. Allowed targets: ${allowedTargets.join(', ')}.`
+      );
+    }
+
+    const relationshipUrl = new URL(
+      `${request.origin}/api/data/v9.2/RelationshipDefinitions/Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata`
+    );
+    relationshipUrl.searchParams.set(
+      '$select',
+      'SchemaName,ReferencedEntity,ReferencingEntity,ReferencingAttribute,ReferencingEntityNavigationPropertyName'
+    );
+    relationshipUrl.searchParams.set(
+      '$filter',
+      `ReferencingEntity eq '${odataEscape(entity.logicalName)}' and ` +
+        `ReferencingAttribute eq '${odataEscape(column.logicalName)}' and ` +
+        `ReferencedEntity eq '${odataEscape(target.logicalName)}'`
+    );
+    const relationships = await getJson<{ value?: RelationshipMetadata[] }>(relationshipUrl.toString());
+    const relationship = relationships.value?.find(
+      (item) => item.ReferencingEntityNavigationPropertyName
+    );
+    const navigationPropertyName = relationship?.ReferencingEntityNavigationPropertyName;
+    if (!navigationPropertyName) {
+      throw new Error(
+        `Could not resolve the Dataverse navigation property for ${column.displayName || column.logicalName} → ${target.logicalName}.`
+      );
+    }
+
+    const targetColumns = [target.primaryIdAttribute, target.primaryNameAttribute]
+      .filter((value): value is string => Boolean(value));
+    const targetUrl = new URL(
+      `${request.origin}/api/data/v9.2/${target.entitySetName}(${recordId})`
+    );
+    targetUrl.searchParams.set('$select', targetColumns.join(','));
+    const targetRecord = await getJson<Record<string, unknown>>(targetUrl.toString());
+    const recordName = lookup.recordName?.trim() || (
+      target.primaryNameAttribute
+        ? String(targetRecord[target.primaryNameAttribute] ?? '') || undefined
+        : undefined
+    );
+
+    return {
+      tableLogicalName: target.logicalName,
+      entitySetName: target.entitySetName,
+      recordId,
+      recordName,
+      navigationPropertyName
     };
   };
 
@@ -586,6 +758,311 @@ export async function executeDataversePrimitive(
     };
   };
 
+  const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const normalizeGuid = (value: string, label: string): string => {
+    const normalized = value.replace(/[{}]/g, '').trim().toLowerCase();
+    if (!guidPattern.test(normalized)) throw new Error(`A valid ${label} GUID is required.`);
+    return normalized;
+  };
+  const actionSignatureKey = (signature: DataverseActionSignature): string =>
+    JSON.stringify({
+      name: signature.name,
+      isBound: signature.isBound,
+      parameters: signature.parameters
+    });
+  const canInvokeAddListMembers = (signature: DataverseActionSignature): boolean => {
+    const parameters = signature.isBound ? signature.parameters.slice(1) : signature.parameters;
+    if (signature.isBound && !signature.parameters[0]?.type.toLowerCase().endsWith('.list')) return false;
+    const names = new Set(parameters.map((parameter) => parameter.name.toLowerCase()));
+    const hasList = signature.isBound || names.has('list') || names.has('listid');
+    const hasMembers = names.has('members') || names.has('memberids');
+    return hasList && hasMembers && parameters.every((parameter) =>
+      ['list', 'listid', 'members', 'memberids'].includes(parameter.name.toLowerCase())
+    );
+  };
+  const resolveAddListMembersSignature = async (): Promise<DataverseActionSignature> => {
+    const response = await fetch(`${request.origin}/api/data/v9.2/$metadata`, {
+      credentials: 'include',
+      headers
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Could not read Dataverse action metadata (${response.status}): ${detail || response.statusText}`);
+    }
+    const metadataXml = await response.text();
+    const attributeValue = (source: string, name: string): string =>
+      source.match(new RegExp(`\\b${name}=["']([^"']+)["']`, 'i'))?.[1] || '';
+    const candidates: DataverseActionSignature[] = [];
+    const actionPattern = /<(?:\w+:)?Action\b([^>]*)>([\s\S]*?)<\/(?:\w+:)?Action>/gi;
+    for (const actionMatch of metadataXml.matchAll(actionPattern)) {
+      const actionAttributes = actionMatch[1] || '';
+      if (attributeValue(actionAttributes, 'Name') !== 'AddListMembersList') continue;
+      const parameters: Array<{ name: string; type: string }> = [];
+      const parameterPattern = /<(?:\w+:)?Parameter\b([^>]*?)(?:\/>|>)/gi;
+      for (const parameterMatch of (actionMatch[2] || '').matchAll(parameterPattern)) {
+        const parameterAttributes = parameterMatch[1] || '';
+        const name = attributeValue(parameterAttributes, 'Name');
+        const type = attributeValue(parameterAttributes, 'Type');
+        if (name && type) parameters.push({ name, type });
+      }
+      candidates.push({
+        name: 'AddListMembersList',
+        isBound: attributeValue(actionAttributes, 'IsBound').toLowerCase() === 'true',
+        parameters
+      });
+    }
+    const signature = candidates.find(canInvokeAddListMembers);
+    if (!signature) {
+      throw new Error('This Dataverse environment does not expose a supported AddListMembersList action signature.');
+    }
+    return signature;
+  };
+  const buildAddListMembersInvocation = (
+    membership: PreparedMarketingListMembership,
+    members: PreparedMarketingListMember[],
+    signature: DataverseActionSignature
+  ): { url: string; body: Record<string, unknown> } => {
+    const parameters = signature.isBound ? signature.parameters.slice(1) : signature.parameters;
+    const body: Record<string, unknown> = {};
+    for (const parameter of parameters) {
+      switch (parameter.name.toLowerCase()) {
+        case 'listid':
+          body[parameter.name] = membership.listId;
+          break;
+        case 'memberids':
+          body[parameter.name] = members.map((member) => member.recordId);
+          break;
+        case 'list':
+          body[parameter.name] = {
+            listid: membership.listId,
+            '@odata.type': 'Microsoft.Dynamics.CRM.list'
+          };
+          break;
+        case 'members':
+          body[parameter.name] = members.map((member) => ({
+            [member.primaryIdAttribute]: member.recordId,
+            '@odata.type': `Microsoft.Dynamics.CRM.${member.tableLogicalName}`
+          }));
+          break;
+        default:
+          throw new Error(`Unsupported AddListMembersList parameter: ${parameter.name}.`);
+      }
+    }
+    return {
+      url: signature.isBound
+        ? `${request.origin}/api/data/v9.2/${membership.listEntitySetName}(${membership.listId})/Microsoft.Dynamics.CRM.${signature.name}`
+        : `${request.origin}/api/data/v9.2/${signature.name}`,
+      body
+    };
+  };
+
+  const prepareListMembership = async (
+    listIdInput: string,
+    memberInputs: MarketingListMemberInput[]
+  ): Promise<PreparedMarketingListMembership> => {
+    const listId = normalizeGuid(listIdInput, 'marketing-list record');
+    if (!Array.isArray(memberInputs) || memberInputs.length === 0) {
+      throw new Error('At least one marketing-list member is required.');
+    }
+    if (memberInputs.length > 50) {
+      throw new Error('A maximum of 50 members can be added in one approval.');
+    }
+
+    const listEntity = await resolveEntity('list');
+    const listAttributes = await getAttributes(listEntity);
+    const listNameColumn = resolveColumn('listname', listAttributes);
+    const listTypeColumn = resolveColumn('type', listAttributes);
+    const memberTypeColumn = resolveColumn('createdfromcode', listAttributes);
+    if (!listNameColumn || !listTypeColumn || !memberTypeColumn) {
+      throw new Error('Could not resolve the standard Dataverse marketing-list columns.');
+    }
+    const listUrl = new URL(
+      `${request.origin}/api/data/v9.2/${listEntity.entitySetName}(${listId})`
+    );
+    listUrl.searchParams.set(
+      '$select',
+      [listEntity.primaryIdAttribute, listNameColumn.logicalName, listTypeColumn.logicalName, memberTypeColumn.logicalName].join(',')
+    );
+    const listRecord = await getJson<Record<string, unknown>>(listUrl.toString(), true);
+    if (listRecord[listTypeColumn.logicalName] !== false) {
+      throw new Error('Members can only be added manually to a static marketing list. This list is dynamic.');
+    }
+    const listMemberObjectType = listRecord[memberTypeColumn.logicalName];
+    if (typeof listMemberObjectType !== 'number') {
+      throw new Error('Dataverse did not return the marketing list member type.');
+    }
+    const listName = String(listRecord[listNameColumn.logicalName] ?? '').trim() || listId;
+
+    const resolvedMemberEntities = new Map<string, ResolvedDataverseEntity>();
+    for (const input of memberInputs) {
+      const requestedTable = input.table.trim();
+      if (!requestedTable) throw new Error('Every proposed list member requires a table.');
+      if (!resolvedMemberEntities.has(requestedTable.toLowerCase())) {
+        resolvedMemberEntities.set(requestedTable.toLowerCase(), await resolveEntity(requestedTable));
+      }
+    }
+    const memberEntities = [...resolvedMemberEntities.values()];
+    const distinctLogicalNames = [...new Set(memberEntities.map((entity) => entity.logicalName))];
+    if (distinctLogicalNames.length !== 1) {
+      throw new Error('All members in one AddListMembersList proposal must belong to the same Dataverse table.');
+    }
+    const memberEntity = memberEntities[0]!;
+    if (!['account', 'contact', 'lead'].includes(memberEntity.logicalName)) {
+      throw new Error('Marketing-list members must be accounts, contacts, or leads.');
+    }
+    if (typeof memberEntity.objectTypeCode !== 'number') {
+      throw new Error(`Dataverse did not return the object type code for ${memberEntity.logicalName}.`);
+    }
+    if (memberEntity.objectTypeCode !== listMemberObjectType) {
+      throw new Error(
+        `${listName} accepts ${String(listRecord[`${memberTypeColumn.logicalName}@OData.Community.Display.V1.FormattedValue`] || `object type ${listMemberObjectType}`)} members, not ${memberEntity.displayCollectionName || memberEntity.logicalName}.`
+      );
+    }
+
+    const memberIds: string[] = [];
+    const seenIds = new Set<string>();
+    for (const input of memberInputs) {
+      const id = normalizeGuid(input.recordId, `${memberEntity.logicalName} record`);
+      if (!seenIds.has(id)) {
+        seenIds.add(id);
+        memberIds.push(id);
+      }
+    }
+    const memberUrl = new URL(`${request.origin}/api/data/v9.2/${memberEntity.entitySetName}`);
+    memberUrl.searchParams.set(
+      '$select',
+      [memberEntity.primaryIdAttribute, memberEntity.primaryNameAttribute]
+        .filter((column): column is string => Boolean(column))
+        .join(',')
+    );
+    memberUrl.searchParams.set(
+      '$filter',
+      memberIds.map((id) => `${memberEntity.primaryIdAttribute} eq ${id}`).join(' or ')
+    );
+    const memberPayload = await getJson<{ value?: Array<Record<string, unknown>> }>(memberUrl.toString());
+    const recordsById = new Map(
+      (memberPayload.value || []).map((record) => [
+        String(record[memberEntity.primaryIdAttribute] || '').replace(/[{}]/g, '').toLowerCase(),
+        record
+      ])
+    );
+    const missingIds = memberIds.filter((id) => !recordsById.has(id));
+    if (missingIds.length) {
+      throw new Error(`Could not find ${missingIds.length} proposed ${memberEntity.logicalName} member${missingIds.length === 1 ? '' : 's'} in Dataverse.`);
+    }
+    const resolvedMembers: PreparedMarketingListMember[] = memberIds.map((id) => {
+      const record = recordsById.get(id)!;
+      return {
+        tableLogicalName: memberEntity.logicalName,
+        primaryIdAttribute: memberEntity.primaryIdAttribute,
+        recordId: id,
+        recordName: memberEntity.primaryNameAttribute
+          ? String(record[memberEntity.primaryNameAttribute] ?? '').trim() || undefined
+          : undefined
+      };
+    });
+
+    const listMemberEntity = await resolveEntity('listmember');
+    const listMemberAttributes = await getAttributes(listMemberEntity);
+    const listLookup = resolveColumn('listid', listMemberAttributes);
+    const entityLookup = resolveColumn('entityid', listMemberAttributes);
+    if (!listLookup || !entityLookup) {
+      throw new Error('Could not resolve the standard marketing-list membership columns.');
+    }
+    const listValueColumn = `_${listLookup.logicalName}_value`;
+    const entityValueColumn = `_${entityLookup.logicalName}_value`;
+    const existingUrl = new URL(`${request.origin}/api/data/v9.2/${listMemberEntity.entitySetName}`);
+    existingUrl.searchParams.set('$select', entityValueColumn);
+    existingUrl.searchParams.set(
+      '$filter',
+      `${listValueColumn} eq ${listId} and (` +
+        memberIds.map((id) => `${entityValueColumn} eq ${id}`).join(' or ') +
+        ')'
+    );
+    const existingPayload = await getJson<{ value?: Array<Record<string, unknown>> }>(existingUrl.toString());
+    const existingIds = new Set(
+      (existingPayload.value || [])
+        .map((record) => String(record[entityValueColumn] || '').replace(/[{}]/g, '').toLowerCase())
+        .filter(Boolean)
+    );
+    const alreadyMembers = resolvedMembers.filter((member) => existingIds.has(member.recordId));
+    const members = resolvedMembers.filter((member) => !existingIds.has(member.recordId));
+    if (!members.length) {
+      throw new Error(`All ${resolvedMembers.length} matching ${memberEntity.displayCollectionName || memberEntity.logicalName} are already members of ${listName}.`);
+    }
+    const actionSignature = await resolveAddListMembersSignature();
+
+    return {
+      id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+      environmentOrigin: request.origin,
+      listId,
+      listName,
+      listEntitySetName: listEntity.entitySetName,
+      memberTableLogicalName: memberEntity.logicalName,
+      memberTableDisplayName: memberEntity.displayCollectionName || memberEntity.displayName,
+      memberObjectTypeCode: memberEntity.objectTypeCode,
+      members,
+      alreadyMembers,
+      actionSignature
+    };
+  };
+
+  const executeListMembership = async (
+    membership: PreparedMarketingListMembership,
+    selectedMemberIds: string[]
+  ): Promise<MarketingListMembershipExecutionResult> => {
+    if (membership.environmentOrigin !== request.origin) {
+      throw new Error('The approved membership change belongs to a different Dataverse environment.');
+    }
+    const approvedMembers = new Map(
+      membership.members.map((member) => [member.recordId.toLowerCase(), member])
+    );
+    const selectedIds = [...new Set(selectedMemberIds.map((id) => normalizeGuid(id, 'selected member record')))]
+      .filter((id) => approvedMembers.has(id));
+    if (!selectedIds.length) throw new Error('Select at least one marketing-list member to add.');
+    if (selectedIds.length !== new Set(selectedMemberIds.map((id) => id.replace(/[{}]/g, '').trim().toLowerCase())).size) {
+      throw new Error('The approved selection contains a member that was not part of the preview.');
+    }
+    const revalidated = await prepareListMembership(
+      membership.listId,
+      selectedIds.map((id) => ({
+        table: approvedMembers.get(id)!.tableLogicalName,
+        recordId: id
+      }))
+    );
+    if (revalidated.members.length !== selectedIds.length || revalidated.alreadyMembers.length > 0) {
+      throw new Error('Marketing-list membership changed after the preview was prepared. Ask Oddy to prepare a fresh preview.');
+    }
+    if (
+      revalidated.listName !== membership.listName ||
+      revalidated.memberTableLogicalName !== membership.memberTableLogicalName ||
+      revalidated.memberObjectTypeCode !== membership.memberObjectTypeCode
+    ) {
+      throw new Error('The marketing list changed after the preview was prepared. Ask Oddy to prepare a fresh preview.');
+    }
+    if (actionSignatureKey(revalidated.actionSignature) !== actionSignatureKey(membership.actionSignature)) {
+      throw new Error('The Dataverse action metadata changed after the preview was prepared. Ask Oddy to prepare a fresh preview.');
+    }
+    const invocation = buildAddListMembersInvocation(revalidated, revalidated.members, revalidated.actionSignature);
+    const response = await fetch(invocation.url, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify(invocation.body)
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Could not add the approved marketing-list members (${response.status}): ${detail || response.statusText}`);
+    }
+    return {
+      listId: revalidated.listId,
+      listName: revalidated.listName,
+      memberTableLogicalName: revalidated.memberTableLogicalName,
+      addedMemberIds: revalidated.members.map((member) => member.recordId),
+      addedMemberNames: revalidated.members.map((member) => member.recordName || member.recordId)
+    };
+  };
+
   const ensureMutationValue = (value: unknown, column: string): unknown => {
     if (
       value == null ||
@@ -599,7 +1076,7 @@ export async function executeDataversePrimitive(
       return value;
     }
     throw new Error(
-      `The proposed value for ${column} must be text, a number, true/false, or null. Lookup and complex values are not supported yet.`
+      `The proposed value for ${column} must be text, a number, true/false, or null.`
     );
   };
 
@@ -619,7 +1096,8 @@ export async function executeDataversePrimitive(
     const entity = await resolveEntity(input.table);
     const attributes = await getAttributes(entity);
     const seen = new Set<string>();
-    const fields: PreparedDataverseMutationField[] = input.values.map((item) => {
+    const fields: PreparedDataverseMutationField[] = [];
+    for (const item of input.values) {
       const column = resolveColumn(item.column, attributes);
       if (!column) throw new Error(`Could not resolve writable column “${item.column}”.`);
       if (seen.has(column.logicalName)) {
@@ -637,19 +1115,60 @@ export async function executeDataversePrimitive(
           `${column.displayName || column.logicalName} cannot be ${input.operation === 'create' ? 'set during creation' : 'updated'}.`
         );
       }
-      if (['Lookup', 'Customer', 'Owner', 'PartyList', 'MultiSelectPicklist'].includes(column.attributeType || '')) {
+      if (['PartyList', 'MultiSelectPicklist'].includes(column.attributeType || '')) {
         throw new Error(
-          `${column.displayName || column.logicalName} uses ${column.attributeType}; lookup and complex field updates are not supported yet.`
+          `${column.displayName || column.logicalName} uses ${column.attributeType}; this complex field type is not supported yet.`
         );
       }
-      return {
+
+      if (['Lookup', 'Customer', 'Owner'].includes(column.attributeType || '')) {
+        if (!item.lookup) {
+          throw new Error(
+            `${column.displayName || column.logicalName} is a lookup. Query the target record and provide its table and exact record ID.`
+          );
+        }
+        const lookup = await resolveLookupReference(entity, column, item.lookup);
+        fields.push({
+          requestedName: item.column,
+          logicalName: column.logicalName,
+          displayName: column.displayName,
+          attributeType: column.attributeType,
+          proposedValue: {
+            tableLogicalName: lookup.tableLogicalName,
+            recordId: lookup.recordId,
+            recordName: lookup.recordName
+          },
+          lookup
+        });
+        continue;
+      }
+
+      if (item.lookup) {
+        throw new Error(`${column.displayName || column.logicalName} is not a lookup field.`);
+      }
+      if (!Object.prototype.hasOwnProperty.call(item, 'value')) {
+        throw new Error(`A proposed value is required for ${column.displayName || column.logicalName}.`);
+      }
+      if (['Picklist', 'State', 'Status'].includes(column.attributeType || '')) {
+        const choice = await resolveChoiceValue(entity, column, item.value);
+        fields.push({
+          requestedName: item.column,
+          logicalName: column.logicalName,
+          displayName: column.displayName,
+          attributeType: column.attributeType,
+          proposedValue: choice.value,
+          proposedFormattedValue: choice.label
+        });
+        continue;
+      }
+      fields.push({
         requestedName: item.column,
         logicalName: column.logicalName,
         displayName: column.displayName,
         attributeType: column.attributeType,
         proposedValue: ensureMutationValue(item.value, column.displayName || column.logicalName)
-      };
-    });
+      });
+    }
 
     let recordId: string | undefined;
     let recordName: string | undefined;
@@ -661,7 +1180,9 @@ export async function executeDataversePrimitive(
       }
       const columns = [
         entity.primaryNameAttribute,
-        ...fields.map((field) => field.logicalName)
+        ...fields.map((field) =>
+          field.lookup ? `_${field.logicalName}_value` : field.logicalName
+        )
       ].filter((column): column is string => Boolean(column));
       const currentUrl = new URL(
         `${request.origin}/api/data/v9.2/${entity.entitySetName}(${recordId})`
@@ -673,9 +1194,20 @@ export async function executeDataversePrimitive(
         ? String(current[entity.primaryNameAttribute] ?? '') || undefined
         : undefined;
       for (const field of fields) {
-        field.currentValue = sanitize(current[field.logicalName]);
+        const currentColumn = field.lookup ? `_${field.logicalName}_value` : field.logicalName;
+        const currentValue = current[currentColumn];
+        if (field.lookup && typeof currentValue === 'string') {
+          field.currentValue = {
+            recordId: currentValue,
+            tableLogicalName: current[
+              `${currentColumn}@Microsoft.Dynamics.CRM.lookuplogicalname`
+            ]
+          };
+        } else {
+          field.currentValue = sanitize(currentValue);
+        }
         const formatted = current[
-          `${field.logicalName}@OData.Community.Display.V1.FormattedValue`
+          `${currentColumn}@OData.Community.Display.V1.FormattedValue`
         ];
         if (typeof formatted === 'string') field.currentFormattedValue = formatted;
       }
@@ -727,8 +1259,26 @@ export async function executeDataversePrimitive(
       if (!writeAllowed || column.logicalName === entity.primaryIdAttribute) {
         throw new Error(`${column.displayName || column.logicalName} is not writable.`);
       }
-      if (['Lookup', 'Customer', 'Owner', 'PartyList', 'MultiSelectPicklist'].includes(column.attributeType || '')) {
+      if (['PartyList', 'MultiSelectPicklist'].includes(column.attributeType || '')) {
         throw new Error(`${column.displayName || column.logicalName} uses an unsupported complex field type.`);
+      }
+      if (['Lookup', 'Customer', 'Owner'].includes(column.attributeType || '')) {
+        if (!field.lookup) {
+          throw new Error(`${column.displayName || column.logicalName} has no approved lookup target.`);
+        }
+        const lookup = await resolveLookupReference(entity, column, {
+          table: field.lookup.tableLogicalName,
+          recordId: field.lookup.recordId,
+          recordName: field.lookup.recordName
+        });
+        payload[`${lookup.navigationPropertyName}@odata.bind`] =
+          `/${lookup.entitySetName}(${lookup.recordId})`;
+        continue;
+      }
+      if (['Picklist', 'State', 'Status'].includes(column.attributeType || '')) {
+        const choice = await resolveChoiceValue(entity, column, field.proposedValue);
+        payload[column.logicalName] = choice.value;
+        continue;
       }
       payload[column.logicalName] = ensureMutationValue(
         field.proposedValue,
@@ -796,6 +1346,27 @@ export async function executeDataversePrimitive(
   };
 
   try {
+    if (request.action === 'prepare_list_membership') {
+      const listMembership = await prepareListMembership(request.listId, request.members);
+      return {
+        ok: true,
+        action: request.action,
+        listMembership
+      };
+    }
+
+    if (request.action === 'execute_list_membership') {
+      const listMembershipResult = await executeListMembership(
+        request.membership,
+        request.selectedMemberIds
+      );
+      return {
+        ok: true,
+        action: request.action,
+        listMembershipResult
+      };
+    }
+
     if (request.action === 'prepare_mutation') {
       const mutation = await prepareMutation(request.mutation);
       return {
@@ -824,6 +1395,13 @@ export async function executeDataversePrimitive(
       const resolvedColumns = requested
         .map((column) => resolveColumn(column, attributes))
         .filter((column): column is ResolvedDataverseColumn => Boolean(column));
+      if (resolvedColumns.some((column) => ['Lookup', 'Customer', 'Owner'].includes(column.attributeType || ''))) {
+        const lookupTargets = await getLookupTargets(entity);
+        for (const column of resolvedColumns) {
+          const targets = lookupTargets.get(column.logicalName);
+          if (targets?.length) column.targets = targets;
+        }
+      }
       const resolvedNames = new Set(resolvedColumns.map((column) => column.requestedName));
       return {
         ok: true,

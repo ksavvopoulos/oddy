@@ -1,14 +1,5 @@
 import type { ChatMessage, DataverseContext, DataverseField } from './types';
 
-export const QUICK_ACTIONS = [
-  {
-    id: 'create-marketing-list',
-    label: 'Create marketing list',
-    prompt:
-      'Help me create a Dataverse marketing list. Ask me for any missing details, including the list name, whether it is static or dynamic, and whether its members are accounts, contacts, or leads. Once the required details are known, prepare the marketing list record for my approval. Do not invent values, add members, or claim the list was created before I approve it.'
-  }
-] as const;
-
 export function filterContextFields(
   context: DataverseContext,
   excludedFields: string[]

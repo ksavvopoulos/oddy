@@ -39,6 +39,16 @@ describe('Dataverse structured primitives', () => {
           }),
           { status: 200 }
         )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [
+              { LogicalName: 'new_registrationstoreid', Targets: ['account'] }
+            ]
+          }),
+          { status: 200 }
+        )
       );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -55,6 +65,7 @@ describe('Dataverse structured primitives', () => {
       'fullname',
       'new_registrationstoreid'
     ]);
+    expect(result.resolvedColumns?.[1]?.targets).toEqual(['account']);
   });
 
   it('compiles and executes a filtered, sorted record query', async () => {
@@ -503,6 +514,333 @@ describe('Dataverse structured primitives', () => {
     expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('PATCH');
     expect(fetchMock.mock.calls[2]?.[1]?.headers).toEqual(expect.objectContaining({ 'If-Match': 'W/"42"' }));
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ address1_city: 'Patra' });
+  });
+
+  it('resolves a Choice label to its numeric Dataverse option value', async () => {
+    const entityMetadata = {
+      LogicalName: 'sieben_scenarios',
+      EntitySetName: 'sieben_scenarioses',
+      PrimaryIdAttribute: 'sieben_scenariosid',
+      PrimaryNameAttribute: 'sieben_name'
+    };
+    const attributes = {
+      value: [
+        { LogicalName: 'sieben_name', AttributeType: 'String', IsValidForRead: true, IsValidForCreate: true },
+        { LogicalName: 'sieben_sendmethod', AttributeType: 'Picklist', IsValidForRead: true, IsValidForCreate: true, DisplayName: { UserLocalizedLabel: { Label: 'Send Method' } } }
+      ]
+    };
+    const optionMetadata = {
+      OptionSet: {
+        Options: [
+          { Value: 100000000, Label: { UserLocalizedLabel: { Label: 'Email' } } },
+          { Value: 100000001, Label: { UserLocalizedLabel: { Label: 'SMS' } } }
+        ]
+      }
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(entityMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(attributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(optionMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(entityMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(attributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(optionMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        sieben_scenariosid: '00000000-0000-0000-0000-000000000030',
+        sieben_name: 'oddy3'
+      }), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const preview = await executeDataversePrimitive({
+      action: 'prepare_mutation',
+      origin: 'https://contoso.crm.dynamics.com',
+      mutation: {
+        operation: 'create',
+        table: 'sieben_scenarios',
+        values: [
+          { column: 'sieben_name', value: 'oddy3' },
+          { column: 'Send Method', value: 'Email' }
+        ]
+      }
+    });
+
+    expect(preview.ok).toBe(true);
+    expect(preview.mutation?.fields[1]).toEqual(expect.objectContaining({
+      logicalName: 'sieben_sendmethod',
+      proposedValue: 100000000,
+      proposedFormattedValue: 'Email'
+    }));
+
+    const applied = await executeDataversePrimitive({
+      action: 'execute_mutation',
+      origin: 'https://contoso.crm.dynamics.com',
+      mutation: preview.mutation!,
+      selectedColumns: ['sieben_name', 'sieben_sendmethod']
+    });
+
+    expect(applied.ok).toBe(true);
+    expect(JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body))).toEqual({
+      sieben_name: 'oddy3',
+      sieben_sendmethod: 100000000
+    });
+  });
+
+  it('previews and applies multiple marketing-list members with one AddListMembersList action', async () => {
+    const listMetadata = {
+      LogicalName: 'list',
+      EntitySetName: 'lists',
+      PrimaryIdAttribute: 'listid',
+      PrimaryNameAttribute: 'listname',
+      ObjectTypeCode: 4300
+    };
+    const listAttributes = {
+      value: [
+        { LogicalName: 'listid', AttributeType: 'Uniqueidentifier', IsValidForRead: true },
+        { LogicalName: 'listname', AttributeType: 'String', IsValidForRead: true },
+        { LogicalName: 'type', AttributeType: 'Boolean', IsValidForRead: true },
+        { LogicalName: 'createdfromcode', AttributeType: 'Picklist', IsValidForRead: true }
+      ]
+    };
+    const listRecord = {
+      listid: '07c003e9-58d0-f111-a05c-000d3a285a7f',
+      listname: 'oddy test',
+      type: false,
+      createdfromcode: 2,
+      'createdfromcode@OData.Community.Display.V1.FormattedValue': 'Contact'
+    };
+    const contactMetadata = {
+      LogicalName: 'contact',
+      EntitySetName: 'contacts',
+      PrimaryIdAttribute: 'contactid',
+      PrimaryNameAttribute: 'fullname',
+      ObjectTypeCode: 2,
+      DisplayCollectionName: { UserLocalizedLabel: { Label: 'Contacts' } }
+    };
+    const contacts = {
+      value: [
+        { contactid: '00000000-0000-0000-0000-000000000101', fullname: 'Ada Lovelace' },
+        { contactid: '00000000-0000-0000-0000-000000000102', fullname: 'Grace Hopper' }
+      ]
+    };
+    const listMemberMetadata = {
+      LogicalName: 'listmember',
+      EntitySetName: 'listmembers',
+      PrimaryIdAttribute: 'listmemberid',
+      PrimaryNameAttribute: 'name'
+    };
+    const listMemberAttributes = {
+      value: [
+        { LogicalName: 'listid', AttributeType: 'Lookup', IsValidForRead: true },
+        { LogicalName: 'entityid', AttributeType: 'Lookup', IsValidForRead: true }
+      ]
+    };
+    const metadataXml = `<?xml version="1.0"?>
+      <Schema Namespace="Microsoft.Dynamics.CRM">
+        <Action Name="AddListMembersList" IsBound="false">
+          <Parameter Name="List" Type="mscrm.list" />
+          <Parameter Name="Members" Type="Collection(mscrm.crmbaseentity)" />
+        </Action>
+      </Schema>`;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(listMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listAttributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listRecord), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(contactMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(contacts), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listMemberMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listMemberAttributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ value: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(metadataXml, { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listAttributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listRecord), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(contactMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(contacts), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listMemberMetadata), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listMemberAttributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ value: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(metadataXml, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const preview = await executeDataversePrimitive({
+      action: 'prepare_list_membership',
+      origin: 'https://contoso.crm.dynamics.com',
+      listId: listRecord.listid,
+      members: [
+        { table: 'contact', recordId: contacts.value[0]!.contactid },
+        { table: 'contact', recordId: contacts.value[1]!.contactid }
+      ]
+    });
+
+    expect(preview.ok).toBe(true);
+    expect(preview.listMembership).toEqual(expect.objectContaining({
+      listName: 'oddy test',
+      memberTableLogicalName: 'contact'
+    }));
+    expect(preview.listMembership?.members.map((member) => member.recordName)).toEqual([
+      'Ada Lovelace',
+      'Grace Hopper'
+    ]);
+
+    const applied = await executeDataversePrimitive({
+      action: 'execute_list_membership',
+      origin: 'https://contoso.crm.dynamics.com',
+      membership: preview.listMembership!,
+      selectedMemberIds: preview.listMembership!.members.map((member) => member.recordId)
+    });
+
+    expect(applied.ok).toBe(true);
+    expect(applied.listMembershipResult?.addedMemberIds).toHaveLength(2);
+    expect(fetchMock.mock.calls[18]?.[0]).toBe(
+      'https://contoso.crm.dynamics.com/api/data/v9.2/AddListMembersList'
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[18]?.[1]?.body))).toEqual({
+      List: {
+        listid: listRecord.listid,
+        '@odata.type': 'Microsoft.Dynamics.CRM.list'
+      },
+      Members: [
+        {
+          contactid: contacts.value[0]!.contactid,
+          '@odata.type': 'Microsoft.Dynamics.CRM.contact'
+        },
+        {
+          contactid: contacts.value[1]!.contactid,
+          '@odata.type': 'Microsoft.Dynamics.CRM.contact'
+        }
+      ]
+    });
+  });
+
+  it('rejects manual membership preparation for a dynamic marketing list', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        LogicalName: 'list',
+        EntitySetName: 'lists',
+        PrimaryIdAttribute: 'listid',
+        PrimaryNameAttribute: 'listname'
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        value: [
+          { LogicalName: 'listname', AttributeType: 'String', IsValidForRead: true },
+          { LogicalName: 'type', AttributeType: 'Boolean', IsValidForRead: true },
+          { LogicalName: 'createdfromcode', AttributeType: 'Picklist', IsValidForRead: true }
+        ]
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        listid: '07c003e9-58d0-f111-a05c-000d3a285a7f',
+        listname: 'Dynamic list',
+        type: true,
+        createdfromcode: 2
+      }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeDataversePrimitive({
+      action: 'prepare_list_membership',
+      origin: 'https://contoso.crm.dynamics.com',
+      listId: '07c003e9-58d0-f111-a05c-000d3a285a7f',
+      members: [{ table: 'contact', recordId: '00000000-0000-0000-0000-000000000101' }]
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('static marketing list');
+  });
+
+  it('previews and applies a single-record lookup using its navigation property', async () => {
+    const sourceEntity = {
+      LogicalName: 'sieben_scenarios',
+      EntitySetName: 'sieben_scenarioses',
+      PrimaryIdAttribute: 'sieben_scenariosid',
+      PrimaryNameAttribute: 'sieben_name'
+    };
+    const sourceAttributes = {
+      value: [
+        { LogicalName: 'sieben_name', AttributeType: 'String', IsValidForRead: true, IsValidForCreate: true },
+        { LogicalName: 'sieben_sender', AttributeType: 'Lookup', IsValidForRead: true, IsValidForCreate: true, DisplayName: { UserLocalizedLabel: { Label: 'Sender' } } }
+      ]
+    };
+    const targetEntity = {
+      LogicalName: 'sieben_senderaccount',
+      EntitySetName: 'sieben_senderaccounts',
+      PrimaryIdAttribute: 'sieben_senderaccountid',
+      PrimaryNameAttribute: 'sieben_name'
+    };
+    const lookupTargets = {
+      value: [{ LogicalName: 'sieben_sender', Targets: ['sieben_senderaccount'] }]
+    };
+    const relationship = {
+      value: [{
+        SchemaName: 'sieben_senderaccount_scenarios',
+        ReferencedEntity: 'sieben_senderaccount',
+        ReferencingEntity: 'sieben_scenarios',
+        ReferencingAttribute: 'sieben_sender',
+        ReferencingEntityNavigationPropertyName: 'sieben_Sender'
+      }]
+    };
+    const senderId = '00000000-0000-0000-0000-000000000020';
+    const scenarioId = '00000000-0000-0000-0000-000000000021';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(sourceEntity), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(sourceAttributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(targetEntity), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(lookupTargets), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(relationship), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sieben_senderaccountid: senderId, sieben_name: 'testEmail' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(sourceEntity), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(sourceAttributes), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(targetEntity), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(lookupTargets), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(relationship), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sieben_senderaccountid: senderId, sieben_name: 'testEmail' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sieben_scenariosid: scenarioId, sieben_name: 'oddy3' }), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const preview = await executeDataversePrimitive({
+      action: 'prepare_mutation',
+      origin: 'https://contoso.crm.dynamics.com',
+      mutation: {
+        operation: 'create',
+        table: 'sieben_scenarios',
+        values: [
+          { column: 'sieben_name', value: 'oddy3' },
+          {
+            column: 'Sender',
+            lookup: {
+              table: 'sieben_senderaccount',
+              recordId: senderId,
+              recordName: 'testEmail'
+            }
+          }
+        ]
+      }
+    });
+
+    expect(preview.ok).toBe(true);
+    expect(preview.mutation?.fields[1]).toEqual(expect.objectContaining({
+      logicalName: 'sieben_sender',
+      proposedValue: expect.objectContaining({ recordId: senderId, recordName: 'testEmail' }),
+      lookup: expect.objectContaining({
+        tableLogicalName: 'sieben_senderaccount',
+        navigationPropertyName: 'sieben_Sender'
+      })
+    }));
+
+    const applied = await executeDataversePrimitive({
+      action: 'execute_mutation',
+      origin: 'https://contoso.crm.dynamics.com',
+      mutation: preview.mutation!,
+      selectedColumns: ['sieben_name', 'sieben_sender']
+    });
+
+    expect(applied.ok).toBe(true);
+    expect(JSON.parse(String(fetchMock.mock.calls[12]?.[1]?.body))).toEqual({
+      sieben_name: 'oddy3',
+      'sieben_Sender@odata.bind': `/sieben_senderaccounts(${senderId})`
+    });
   });
 
   it('creates a record only after the approved proposal is executed', async () => {

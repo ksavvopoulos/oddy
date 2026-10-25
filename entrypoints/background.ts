@@ -25,17 +25,32 @@ import {
   type DataverseQuerySpec
 } from '../lib/dataverse-primitives';
 import { errorMessage } from '../lib/messages';
+import {
+  buildSkillExecutionInstruction,
+  executeOddySkillChange,
+  getSkillById,
+  getUserSkills,
+  prepareOddySkillChange,
+  skillRevision
+} from '../lib/skills';
 import { getSettings, isAzureOpenAIConfigured } from '../lib/storage';
 import type {
   AzureOpenAISettings,
   ChatMessage,
   DataverseContext,
   DataverseMutationExecutionResult,
+  DataverseMutationValueInput,
+  MarketingListMembershipExecutionResult,
   PreparedDataverseMutation,
+  PreparedMarketingListMembership,
   ExtensionMessage,
   LlmResponse,
   MessageResult,
   NavigationProgress,
+  OddySkill,
+  OddySkillRun,
+  OddySkillToolName,
+  PreparedOddySkillChange,
   ToolActivity
 } from '../lib/types';
 
@@ -101,13 +116,44 @@ async function handleMessage(message: ExtensionMessage): Promise<MessageResult<u
       if (!isAzureOpenAIConfigured(settings)) {
         throw new Error('Configure Azure OpenAI in extension settings first.');
       }
+      const skillRun = message.payload.skillRun;
+      const skill = skillRun ? await getSkillById(skillRun.skillId) : undefined;
+      if (skillRun && !skill) {
+        throw new Error('The selected Oddy skill is unavailable or disabled.');
+      }
+      if (skill && message.payload.allowDataverseTools !== true) {
+        throw new Error('Oddy skills require Dataverse tools to be enabled for this request.');
+      }
       const response = await runDataverseAssistant(
         settings.azureOpenAI,
         message.payload.messages,
         message.payload.allowDataverseTools === true,
-        message.payload.requestId
+        message.payload.allowSkillTools === true,
+        message.payload.requestId,
+        skill && skillRun ? { skill, run: skillRun } : undefined
       );
       return { ok: true, data: response };
+    }
+
+    case 'EXECUTE_ODDY_SKILL_CHANGE': {
+      return { ok: true, data: await executeOddySkillChange(message.payload.change) };
+    }
+
+    case 'EXECUTE_MARKETING_LIST_MEMBERSHIP': {
+      const context = await getActiveDataverseContext();
+      if (!context.origin || context.origin !== message.payload.membership.environmentOrigin) {
+        throw new Error('Return to the Dataverse environment where this preview was prepared before approving it.');
+      }
+      const result = await executePrimitiveInActiveTab(context, {
+        action: 'execute_list_membership',
+        origin: context.origin,
+        membership: message.payload.membership,
+        selectedMemberIds: message.payload.selectedMemberIds
+      });
+      if (!result.ok || !result.listMembershipResult) {
+        throw new Error(result.error || 'Dataverse did not add the approved marketing-list members.');
+      }
+      return { ok: true, data: result.listMembershipResult };
     }
 
     case 'EXECUTE_DATAVERSE_MUTATION': {
@@ -326,7 +372,7 @@ const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'prepare_dataverse_record_change',
       description:
-        'Prepare a create or update proposal for explicit user approval. For updates, query the target record first and pass its exact record ID. This tool never writes data. It returns a field-level before/after preview. Scalar text, number, boolean, date/choice values, and null are supported; lookups and complex values are not yet supported.',
+        'Prepare a create or update proposal for explicit user approval. For updates, query the target record first and pass its exact record ID. For a lookup, resolve the column to discover its target table, query the target record, and pass lookup with that table and exact record ID. This tool never writes data. It returns a field-level before/after preview. Scalar values and single-record Lookup, Customer, and Owner fields are supported; party-list and multi-select fields are not.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -348,14 +394,64 @@ const DATAVERSE_TOOLS: AzureToolDefinition[] = [
                 column: { type: 'string', description: 'Column logical or display name.' },
                 value: {
                   type: ['string', 'number', 'boolean', 'null'],
-                  description: 'Proposed scalar value. Use null to clear a field.'
+                  description: 'Proposed scalar value. Choice fields accept either the localized option label or numeric option value; Oddy validates and stores the numeric value.'
+                },
+                lookup: {
+                  type: 'object',
+                  additionalProperties: false,
+                  description: 'Proposed lookup target. Query the target record first and use its exact ID.',
+                  properties: {
+                    table: { type: 'string', description: 'Target table logical or display name.' },
+                    recordId: { type: 'string', description: 'Exact target record GUID.' },
+                    recordName: { type: 'string', description: 'Optional target display name for the approval preview.' }
+                  },
+                  required: ['table', 'recordId']
                 }
               },
-              required: ['column', 'value']
+              required: ['column']
             }
           }
         },
         required: ['operation', 'table', 'values']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'prepare_marketing_list_membership',
+      description:
+        'Prepare one bulk AddListMembersList proposal for explicit approval. Query the exact static marketing list and all intended account, contact, or lead records first, then pass their IDs. All members must belong to the same table and match the list member type. The extension validates the tenant action metadata and never writes data during preparation.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          listId: {
+            type: 'string',
+            description: 'Exact marketing-list GUID returned by a list record query.'
+          },
+          members: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 50,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                table: {
+                  type: 'string',
+                  description: 'Member table logical or display name. Use account, contact, or lead.'
+                },
+                recordId: {
+                  type: 'string',
+                  description: 'Exact member GUID returned by a record query.'
+                }
+              },
+              required: ['table', 'recordId']
+            }
+          }
+        },
+        required: ['listId', 'members']
       }
     }
   },
@@ -376,6 +472,133 @@ const DATAVERSE_TOOLS: AzureToolDefinition[] = [
           viewType: { type: 'string', enum: ['userquery', 'savedquery'] }
         },
         required: ['target', 'tableLogicalName']
+      }
+    }
+  }
+];
+
+const ODDY_SKILL_TOOLS: AzureToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_oddy_skills',
+      description:
+        'List user-created Oddy skills. Bundled skills are immutable and are not returned by this tool.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {}
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_oddy_skill',
+      description:
+        'Read the complete definition of one user-created Oddy skill before preparing an update or deletion.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          skillId: { type: 'string', description: 'Exact custom skill ID returned by list_oddy_skills.' }
+        },
+        required: ['skillId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'prepare_oddy_skill_change',
+      description:
+        'Prepare creation, full-definition update, or deletion of a user-created Oddy skill for explicit user approval. Call get_oddy_skill before update or delete. This tool never changes storage. Bundled skills cannot be modified.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          operation: { type: 'string', enum: ['create', 'update', 'delete'] },
+          skillId: {
+            type: 'string',
+            description: 'Required for update or delete. Exact custom skill ID.'
+          },
+          baseRevision: {
+            type: 'string',
+            description: 'Required for update or delete. Exact revision returned by get_oddy_skill.'
+          },
+          skill: {
+            type: 'object',
+            additionalProperties: false,
+            description: 'Complete replacement definition required for create or update.',
+            properties: {
+              id: { type: 'string', description: 'Optional ID for creation; ignored for updates.' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              version: { type: 'string' },
+              enabled: { type: 'boolean' },
+              instructions: { type: 'string' },
+              allowedTools: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 8,
+                items: {
+                  type: 'string',
+                  enum: [
+                    'resolve_dataverse_schema',
+                    'query_dataverse_records',
+                    'discover_dataverse_relationships',
+                    'manage_dataverse_view',
+                    'execute_dataverse_view',
+                    'prepare_dataverse_record_change',
+                    'prepare_marketing_list_membership',
+                    'navigate_dataverse'
+                  ]
+                }
+              },
+              inputs: {
+                type: 'array',
+                maxItems: 20,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: 'string' },
+                    label: { type: 'string' },
+                    type: { type: 'string', enum: ['text', 'number', 'select'] },
+                    required: { type: 'boolean' },
+                    options: { type: 'array', items: { type: 'string' } }
+                  },
+                  required: ['id', 'label', 'type', 'required']
+                }
+              },
+              steps: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 20,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: 'string' },
+                    instruction: { type: 'string' }
+                  },
+                  required: ['id', 'instruction']
+                }
+              }
+            },
+            required: [
+              'name',
+              'description',
+              'version',
+              'enabled',
+              'instructions',
+              'allowedTools',
+              'inputs',
+              'steps'
+            ]
+          }
+        },
+        required: ['operation']
       }
     }
   }
@@ -402,12 +625,21 @@ async function runDataverseAssistant(
   settings: AzureOpenAISettings,
   inputMessages: ChatMessage[],
   allowDataverseTools: boolean,
-  requestId?: string
+  allowSkillTools: boolean,
+  requestId?: string,
+  skillExecution?: { skill: OddySkill; run: OddySkillRun }
 ): Promise<LlmResponse> {
-  if (!allowDataverseTools) return callAzureOpenAI(settings, inputMessages);
+  if (!allowDataverseTools && !allowSkillTools) {
+    return callAzureOpenAI(settings, inputMessages);
+  }
 
   const context = await getActiveDataverseContext();
-  if (!context.isDataverse || !context.origin) return callAzureOpenAI(settings, inputMessages);
+  if (allowDataverseTools && (!context.isDataverse || !context.origin)) {
+    if (skillExecution) {
+      throw new Error('Return to an active Dataverse page before running this skill.');
+    }
+    return callAzureOpenAI(settings, inputMessages);
+  }
 
   const conversation: AzureChatMessage[] = inputMessages.map((message) => ({
     role: message.role,
@@ -427,20 +659,48 @@ async function runDataverseAssistant(
       `For opening the first/newest/oldest result: execute the view with top 1, then navigate to the returned record ID. ` +
       `For an unfiltered list: resolve the table and navigate to its logical name. ` +
       `For a business-record update: query and uniquely identify the record, then prepare a field-level change proposal. ` +
-      `For a new business record: prepare a create proposal with all known scalar field values. ` +
-      `Prepared record changes require an explicit approval click in the extension; never claim a proposed change was applied. ` +
+      `For a new business record: prepare a create proposal with all known field values. Choice labels may be passed directly and are resolved to numeric options from Dataverse metadata. For lookup fields, resolve the column targets, query the exact target record, and pass its table and record ID in the lookup value. ` +
+      `For adding accounts, contacts, or leads to a marketing list: query the exact list and every intended member, then prepare one bulk marketing-list membership proposal. Do not use ordinary record creation or claim members were added before approval. ` +
+      `Prepared record and marketing-list membership changes require an explicit approval click in the extension; never claim a proposed change was applied. ` +
       `Navigation results report whether the destination loaded or only started; never claim it loaded when navigationState is started. ` +
       `Never ask the user to click a row, supply a record ID, apply a manual filter, or follow a link when these primitives can complete the request. ` +
       `Never execute business-record writes yourself. Only prepare proposals; the extension performs approved writes outside the model tool loop. ` +
-      `Prior messages may include an “Extension tool audit (authoritative)” section; treat it as the execution source of truth.`
+      `Prior messages may include an “Extension tool audit (authoritative)” section; treat it as the execution source of truth. ` +
+      (allowSkillTools
+        ? `You may inspect user-created Oddy skills and prepare skill changes only when the user explicitly asks. Always read the full existing skill before an update or deletion. Never modify bundled skills, never claim a proposed skill change was applied, and never prepare an unrelated self-modification.`
+        : '')
   };
-  conversation.splice(conversation[0]?.role === 'system' ? 1 : 0, 0, instruction);
+  const instructionIndex = conversation[0]?.role === 'system' ? 1 : 0;
+  conversation.splice(instructionIndex, 0, instruction);
+
+  if (skillExecution) {
+    conversation.splice(instructionIndex + 1, 0, {
+      role: 'system',
+      content: buildSkillExecutionInstruction(skillExecution.skill, skillExecution.run)
+    });
+  }
+
+  const activeTools = skillExecution
+    ? DATAVERSE_TOOLS.filter((tool) =>
+        skillExecution.skill.allowedTools.includes(
+          tool.function.name as OddySkill['allowedTools'][number]
+        )
+      )
+    : [
+        ...(allowDataverseTools ? DATAVERSE_TOOLS : []),
+        ...(allowSkillTools ? ODDY_SKILL_TOOLS : [])
+      ];
+  if (activeTools.length === 0) {
+    throw new Error('The selected Oddy skill has no supported tools enabled.');
+  }
 
   const toolsUsed: ToolActivity[] = [];
   const pendingMutations: PreparedDataverseMutation[] = [];
+  const pendingListMemberships: PreparedMarketingListMembership[] = [];
+  const pendingSkillChanges: PreparedOddySkillChange[] = [];
   let completion = await callAzureOpenAIResponses(settings, {
     messages: conversation,
-    tools: DATAVERSE_TOOLS
+    tools: activeTools
   });
 
   for (let round = 0; round < 12; round += 1) {
@@ -449,7 +709,9 @@ async function runDataverseAssistant(
       return {
         content: completion.content,
         toolsUsed: toolsUsed.length ? toolsUsed : undefined,
-        pendingMutations: pendingMutations.length ? pendingMutations : undefined
+        pendingMutations: pendingMutations.length ? pendingMutations : undefined,
+        pendingListMemberships: pendingListMemberships.length ? pendingListMemberships : undefined,
+        pendingSkillChanges: pendingSkillChanges.length ? pendingSkillChanges : undefined
       };
     }
 
@@ -464,6 +726,12 @@ async function runDataverseAssistant(
       if ('action' in result && result.action === 'prepare_mutation' && result.mutation) {
         pendingMutations.push(result.mutation);
       }
+      if ('action' in result && result.action === 'prepare_list_membership' && result.listMembership) {
+        pendingListMemberships.push(result.listMembership);
+      }
+      if ('action' in result && result.action === 'prepare_skill_change' && result.change) {
+        pendingSkillChanges.push(result.change);
+      }
       toolsUsed.push(activityForTool(toolCall.name, result));
       outputs.push({
         type: 'function_call_output',
@@ -475,7 +743,7 @@ async function runDataverseAssistant(
     completion = await callAzureOpenAIResponses(settings, {
       previousResponseId: completion.id,
       input: outputs,
-      tools: DATAVERSE_TOOLS
+      tools: activeTools
     });
   }
 
@@ -515,17 +783,77 @@ interface XrmNavigationResult {
   error?: string;
 }
 
+interface OddySkillToolResult {
+  ok: boolean;
+  action: 'list_skills' | 'get_skill' | 'prepare_skill_change';
+  skills?: Array<Pick<OddySkill, 'id' | 'name' | 'description' | 'version' | 'enabled'>>;
+  skill?: OddySkill;
+  revision?: string;
+  change?: PreparedOddySkillChange;
+  error?: string;
+}
+
 async function executeAssistantTool(
   context: DataverseContext,
   toolName: string,
   rawArguments: string,
   requestId?: string
-): Promise<DataversePrimitiveResult | NavigationResult> {
+): Promise<DataversePrimitiveResult | NavigationResult | OddySkillToolResult> {
   let args: Record<string, unknown>;
   try {
     args = JSON.parse(rawArguments || '{}') as Record<string, unknown>;
   } catch {
     return { ok: false, error: 'The model supplied invalid JSON tool arguments.' };
+  }
+
+  if (toolName === 'list_oddy_skills') {
+    const skills = await getUserSkills();
+    return {
+      ok: true,
+      action: 'list_skills',
+      skills: skills.map(({ id, name, description, version, enabled }) => ({
+        id,
+        name,
+        description,
+        version,
+        enabled
+      }))
+    };
+  }
+
+  if (toolName === 'get_oddy_skill') {
+    const skillId = stringValue(args.skillId);
+    const skill = (await getUserSkills()).find((item) => item.id === skillId);
+    return skill
+      ? { ok: true, action: 'get_skill', skill, revision: skillRevision(skill) }
+      : {
+          ok: false,
+          action: 'get_skill',
+          error: 'The requested custom skill was not found. Bundled skills are immutable.'
+        };
+  }
+
+  if (toolName === 'prepare_oddy_skill_change') {
+    const operation = args.operation;
+    if (operation !== 'create' && operation !== 'update' && operation !== 'delete') {
+      return { ok: false, action: 'prepare_skill_change', error: 'A valid skill-change operation is required.' };
+    }
+    try {
+      const skill = operation === 'delete' ? undefined : skillFromToolArguments(args.skill);
+      const change = await prepareOddySkillChange({
+        operation,
+        skillId: optionalString(args.skillId),
+        skill,
+        baseRevision: optionalString(args.baseRevision)
+      });
+      return { ok: true, action: 'prepare_skill_change', change };
+    } catch (error) {
+      return {
+        ok: false,
+        action: 'prepare_skill_change',
+        error: errorMessage(error)
+      };
+    }
   }
 
   if (toolName === 'navigate_dataverse') {
@@ -597,11 +925,64 @@ async function executeAssistantTool(
         values: mutationValueArray(args.values)
       }
     };
+  } else if (toolName === 'prepare_marketing_list_membership') {
+    request = {
+      action: 'prepare_list_membership',
+      origin: context.origin,
+      listId: stringValue(args.listId),
+      members: marketingListMemberArray(args.members)
+    };
   } else {
     return { ok: false, error: `Unsupported tool: ${toolName}` };
   }
 
   return executePrimitiveInActiveTab(context, request);
+}
+
+function skillFromToolArguments(value: unknown): OddySkill {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('A complete skill definition is required.');
+  }
+  const candidate = value as Record<string, unknown>;
+  const allowedTools = stringArray(candidate.allowedTools, 8) as OddySkillToolName[];
+  const inputs = Array.isArray(candidate.inputs)
+    ? candidate.inputs
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .map((item) => {
+          const type: OddySkill['inputs'][number]['type'] =
+            item.type === 'number' || item.type === 'select' ? item.type : 'text';
+          return {
+            id: stringValue(item.id),
+            label: stringValue(item.label),
+            type,
+            required: item.required === true,
+            ...(type === 'select' ? { options: stringArray(item.options, 50) } : {})
+          };
+        })
+        .slice(0, 20)
+    : [];
+  const steps = Array.isArray(candidate.steps)
+    ? candidate.steps
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .map((item) => ({
+          id: stringValue(item.id),
+          instruction: stringValue(item.instruction)
+        }))
+        .slice(0, 20)
+    : [];
+
+  return {
+    id: stringValue(candidate.id),
+    name: stringValue(candidate.name),
+    description: stringValue(candidate.description),
+    version: stringValue(candidate.version),
+    source: 'user',
+    enabled: candidate.enabled !== false,
+    instructions: stringValue(candidate.instructions),
+    allowedTools,
+    inputs,
+    steps
+  };
 }
 
 function queryFromArguments(args: Record<string, unknown>): DataverseQuerySpec {
@@ -616,22 +997,49 @@ function queryFromArguments(args: Record<string, unknown>): DataverseQuerySpec {
   };
 }
 
-function mutationValueArray(
-  value: unknown
-): Array<{ column: string; value: unknown }> {
+function marketingListMemberArray(value: unknown): Array<{ table: string; recordId: string }> {
   if (!Array.isArray(value)) return [];
   return value
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
     .map((item) => ({
-      column: stringValue(item.column),
-      value: item.value
+      table: stringValue(item.table),
+      recordId: stringValue(item.recordId)
     }))
-    .filter((item) => item.column && (
-      item.value == null ||
-      typeof item.value === 'string' ||
-      typeof item.value === 'number' ||
-      typeof item.value === 'boolean'
-    ))
+    .filter((item) => item.table && item.recordId)
+    .slice(0, 50);
+}
+
+function mutationValueArray(value: unknown): DataverseMutationValueInput[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item): DataverseMutationValueInput | undefined => {
+      const column = stringValue(item.column);
+      const hasScalarValue = Object.prototype.hasOwnProperty.call(item, 'value') && (
+        item.value == null ||
+        typeof item.value === 'string' ||
+        typeof item.value === 'number' ||
+        typeof item.value === 'boolean'
+      );
+      const lookupValue = item.lookup && typeof item.lookup === 'object' && !Array.isArray(item.lookup)
+        ? item.lookup as Record<string, unknown>
+        : undefined;
+      const lookupRecordName = lookupValue ? optionalString(lookupValue.recordName) : undefined;
+      const lookup = lookupValue
+        ? {
+            table: stringValue(lookupValue.table),
+            recordId: stringValue(lookupValue.recordId),
+            ...(lookupRecordName ? { recordName: lookupRecordName } : {})
+          }
+        : undefined;
+      if (!column || (!hasScalarValue && (!lookup?.table || !lookup.recordId))) return undefined;
+      return {
+        column,
+        ...(hasScalarValue ? { value: item.value } : {}),
+        ...(lookup?.table && lookup.recordId ? { lookup } : {})
+      } satisfies DataverseMutationValueInput;
+    })
+    .filter((item): item is DataverseMutationValueInput => Boolean(item))
     .slice(0, 20);
 }
 
@@ -1118,7 +1526,7 @@ function getSearchParam(url: URL, name: string): string | null {
 
 function activityForTool(
   toolName: string,
-  result: DataversePrimitiveResult | NavigationResult
+  result: DataversePrimitiveResult | NavigationResult | OddySkillToolResult
 ): ToolActivity {
   if (!result.ok) {
     return {
@@ -1130,6 +1538,32 @@ function activityForTool(
   }
 
   if ('action' in result) {
+    if (result.action === 'list_skills') {
+      return {
+        name: toolName,
+        label: 'Listed custom skills',
+        summary: `${result.skills?.length || 0} custom skill${result.skills?.length === 1 ? '' : 's'}`,
+        details: result.skills?.map((skill) => `${skill.name} (${skill.id})`).join('; ') || 'No custom skills.'
+      };
+    }
+    if (result.action === 'get_skill') {
+      return {
+        name: toolName,
+        label: `Read ${result.skill?.name || 'custom skill'}`,
+        summary: 'Full skill definition loaded',
+        details: result.skill ? `${result.skill.steps.length} steps; ${result.skill.allowedTools.length} allowed tools.` : undefined
+      };
+    }
+    if (result.action === 'prepare_skill_change') {
+      return {
+        name: toolName,
+        label: `Prepared skill ${result.change?.operation || 'change'}`,
+        summary: 'Awaiting explicit approval',
+        details: result.change
+          ? `${result.change.skillId}; local skill storage was not changed.`
+          : 'Local skill storage was not changed.'
+      };
+    }
     if (result.action === 'resolve_schema') {
       return {
         name: toolName,
@@ -1180,6 +1614,24 @@ function activityForTool(
         details: result.mutationResult?.recordId
       };
     }
+    if (result.action === 'prepare_list_membership') {
+      return {
+        name: toolName,
+        label: `Prepared members for ${result.listMembership?.listName || 'marketing list'}`,
+        summary: `${result.listMembership?.members.length || 0} member${result.listMembership?.members.length === 1 ? '' : 's'} awaiting approval`,
+        details: result.listMembership
+          ? `Bulk AddListMembersList proposal for ${result.listMembership.memberTableLogicalName}; ${result.listMembership.alreadyMembers.length} existing member${result.listMembership.alreadyMembers.length === 1 ? '' : 's'} excluded; no membership was changed.`
+          : 'No marketing-list membership was changed.'
+      };
+    }
+    if (result.action === 'execute_list_membership') {
+      return {
+        name: toolName,
+        label: `Added members to ${result.listMembershipResult?.listName || 'marketing list'}`,
+        summary: `${result.listMembershipResult?.addedMemberIds.length || 0} member${result.listMembershipResult?.addedMemberIds.length === 1 ? '' : 's'} added`,
+        details: result.listMembershipResult?.listId
+      };
+    }
     if (result.action === 'upsert_view') {
       return {
         name: toolName,
@@ -1188,11 +1640,12 @@ function activityForTool(
         details: `View ${result.view?.id}; query: ${JSON.stringify(result.view?.query)}.`
       };
     }
+    const dataverseResult = result as DataversePrimitiveResult;
     return {
       name: toolName,
-      label: `Executed ${result.view?.name || 'personal view'}`,
-      summary: `${result.records?.length || 0} record${result.records?.length === 1 ? '' : 's'} returned`,
-      details: `View ${result.view?.id}; records returned in configured filter and sort order.`
+      label: `Executed ${dataverseResult.view?.name || 'personal view'}`,
+      summary: `${dataverseResult.records?.length || 0} record${dataverseResult.records?.length === 1 ? '' : 's'} returned`,
+      details: `View ${dataverseResult.view?.id}; records returned in configured filter and sort order.`
     };
   }
 

@@ -19,6 +19,14 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   privacy: {
     includeRecordContextByDefault: true,
     excludedFields: []
+  },
+  skills: {
+    allowModelManagementByDefault: false
+  },
+  conversationHistory: {
+    enabled: false,
+    maxConversations: 50,
+    retentionDays: 30
   }
 };
 
@@ -39,6 +47,14 @@ export async function getSettings(): Promise<ExtensionSettings> {
     privacy: {
       ...DEFAULT_SETTINGS.privacy,
       ...value?.privacy
+    },
+    skills: {
+      ...DEFAULT_SETTINGS.skills,
+      ...value?.skills
+    },
+    conversationHistory: {
+      ...DEFAULT_SETTINGS.conversationHistory,
+      ...value?.conversationHistory
     }
   };
 }

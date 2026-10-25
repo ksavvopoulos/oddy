@@ -6,7 +6,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 300px; }
-button, textarea, input { font: inherit; }
+button, textarea, input, select { font: inherit; }
 button { cursor: pointer; }
 
 .panel-shell { min-height: 100vh; padding-bottom: 18px; }
@@ -25,7 +25,25 @@ button { cursor: pointer; }
 .topbar-actions { display: flex; align-items: center; gap: 6px; }
 .icon-button { width: 34px; height: 34px; border: 0; border-radius: 9px; color: #5f6680; background: #f1f3f8; font-size: 16px; }
 .icon-button:hover { background: #e8eaf3; }
+.icon-button:disabled { cursor: not-allowed; opacity: .45; }
 .icon-button.subtle { width: 30px; height: 30px; background: transparent; }
+.history-drawer { margin: 12px 14px 0; overflow: hidden; background: white; border: 1px solid #dfe2eb; border-radius: 14px; box-shadow: 0 8px 26px rgba(38, 49, 92, .08); }
+.history-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 13px; border-bottom: 1px solid #e7e9f0; }
+.history-heading .eyebrow { margin-bottom: 2px; }
+.history-heading strong { color: #303a57; font-size: 12px; }
+.history-clear { color: #9a3540; background: transparent; border: 0; padding: 4px; font-size: 9px; font-weight: 800; }
+.history-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 9px; padding: 9px; color: #78672f; background: #fff9e9; border-radius: 8px; font-size: 9px; line-height: 1.4; }
+.history-notice button { flex: 0 0 auto; color: #6559c8; background: transparent; border: 0; padding: 3px; font-size: 9px; font-weight: 800; }
+.history-empty { margin: 0; padding: 18px 13px; color: #858ca0; text-align: center; font-size: 10px; }
+.history-list { display: grid; max-height: 310px; overflow: auto; }
+.history-list article { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; border-bottom: 1px solid #eceef4; }
+.history-list article:last-child { border-bottom: 0; }
+.history-list article.current { background: #f8f7ff; }
+.history-open { display: grid; gap: 3px; min-width: 0; text-align: left; color: #35405d; background: transparent; border: 0; padding: 10px 4px 10px 12px; }
+.history-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.history-open span, .history-open small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #858ca0; font-size: 8px; }
+.history-delete { color: #9a3540; background: transparent; border: 0; padding: 7px; font-size: 16px; }
+.history-open:disabled, .history-delete:disabled, .history-clear:disabled { cursor: not-allowed; opacity: .45; }
 
 .setup-banner { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 14px 14px 0; padding: 13px; color: #3f387b; background: #efedff; border: 1px solid #d9d4ff; border-radius: 12px; }
 .setup-banner strong { font-size: 13px; }
@@ -40,10 +58,30 @@ h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: -.025em; over
 .context-meta span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: #5e6680; background: #f3f5f9; border-radius: 999px; padding: 5px 8px; font-size: 10px; }
 .context-warning { color: #8a6220; background: #fff8e8; border-radius: 8px; padding: 8px; margin: 11px 0 0; font-size: 11px; line-height: 1.4; }
 
-.quick-section { margin: 20px 14px 0; }
-.quick-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
-.quick-grid button { min-height: 39px; text-align: left; color: #38415d; background: white; border: 1px solid #e2e5ee; border-radius: 10px; padding: 9px 10px; font-size: 11px; font-weight: 700; }
-.quick-grid button:hover { color: #5144c4; border-color: #bdb7ec; background: #faf9ff; }
+.skill-section { margin: 20px 14px 0; }
+.skill-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.skill-section-heading .section-label { margin-bottom: 0; }
+.skill-section-heading button { color: #6559c8; background: transparent; border: 0; padding: 4px; font-size: 9px; font-weight: 800; }
+.skill-grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 7px; }
+.skill-grid > button { display: grid; gap: 3px; min-height: 54px; text-align: left; color: #38415d; background: white; border: 1px solid #e2e5ee; border-radius: 10px; padding: 10px; }
+.skill-grid > button:hover, .skill-grid > button.active { color: #5144c4; border-color: #bdb7ec; background: #faf9ff; }
+.skill-grid strong { font-size: 11px; }
+.skill-grid span { color: #6f778d; font-size: 9px; line-height: 1.4; }
+.skill-grid small { color: #8d84c7; font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.skill-runner { margin-top: 9px; overflow: hidden; background: white; border: 1px solid #dcd9f4; border-radius: 12px; }
+.skill-runner-heading { display: flex; justify-content: space-between; gap: 10px; padding: 10px 11px; background: #f4f2ff; border-bottom: 1px solid #e4e1f6; }
+.skill-runner-heading > div { display: grid; gap: 2px; }
+.skill-runner-heading strong { color: #3e356f; font-size: 11px; }
+.skill-runner-heading span { color: #777093; font-size: 8px; }
+.skill-close { color: #706a86; background: transparent; border: 0; padding: 0 3px; font-size: 18px; line-height: 1; }
+.skill-inputs { display: grid; gap: 8px; padding: 11px; }
+.skill-inputs label { display: grid; gap: 4px; color: #4b5470; font-size: 9px; font-weight: 800; }
+.skill-inputs input, .skill-inputs select { width: 100%; color: #25304d; background: #fafbfe; border: 1px solid #dfe2eb; border-radius: 8px; padding: 8px; outline: none; font-size: 10px; }
+.skill-inputs input:focus, .skill-inputs select:focus { border-color: #7165df; box-shadow: 0 0 0 3px rgba(113, 101, 223, .11); }
+.skill-runner-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px 11px; border-top: 1px solid #ececf3; }
+.skill-runner-actions small { color: #858ca0; font-size: 8px; line-height: 1.35; }
+.skill-runner-actions button { flex: 0 0 auto; color: white; background: #5d51d3; border: 0; border-radius: 8px; padding: 7px 10px; font-size: 9px; font-weight: 850; }
+.skill-runner-actions button:disabled { cursor: not-allowed; opacity: .45; }
 
 .transcript { display: grid; gap: 11px; margin: 20px 14px 0; }
 .message { display: grid; gap: 5px; }
@@ -77,6 +115,14 @@ h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: -.025em; over
 .mutation-fields > label:last-child { border-bottom: 0; }
 .mutation-fields > label.excluded { opacity: .5; }
 .mutation-fields input { width: 14px; height: 14px; margin: 0; accent-color: #6557d8; }
+.membership-members { display: grid; max-height: 270px; overflow: auto; }
+.membership-members > label { display: grid; grid-template-columns: 15px minmax(0, 1fr); gap: 8px; align-items: center; padding: 9px 10px; border-bottom: 1px solid #e8eaf2; cursor: pointer; }
+.membership-members > label:last-child { border-bottom: 0; }
+.membership-members > label.excluded { opacity: .5; }
+.membership-members input { width: 14px; height: 14px; margin: 0; accent-color: #6557d8; }
+.membership-members span { display: grid; gap: 2px; min-width: 0; }
+.membership-members strong { overflow: hidden; text-overflow: ellipsis; color: #343d59; font-size: 9px; }
+.membership-members small { overflow-wrap: anywhere; color: #9298aa; font-size: 8px; }
 .mutation-field-name { display: grid; gap: 1px; min-width: 0; }
 .mutation-field-name strong { overflow-wrap: anywhere; color: #343d59; font-size: 9px; }
 .mutation-field-name small { overflow-wrap: anywhere; color: #9298aa; font-size: 8px; }
@@ -103,6 +149,27 @@ h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: -.025em; over
 .mutation-card.approved .mutation-heading > span { color: #276846; background: #d7f0e1; }
 .mutation-card.rejected { opacity: .65; }
 .mutation-card.rejected .mutation-heading > span { color: #686f80; background: #e5e7ec; }
+.skill-change-list { display: grid; gap: 10px; margin-top: 12px; }
+.skill-change-card { overflow: hidden; border: 1px solid #d9ddef; border-radius: 11px; background: #fbfcff; }
+.skill-change-heading { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; padding: 10px; background: #f3f1ff; border-bottom: 1px solid #e0ddf2; }
+.skill-change-heading > div { display: grid; gap: 2px; }
+.skill-change-heading strong { color: #34305c; font-size: 11px; }
+.skill-change-heading small { color: #77718e; font-size: 9px; }
+.skill-change-heading > span { flex: 0 0 auto; color: #6656bd; background: #e9e5ff; border-radius: 999px; padding: 4px 6px; font-size: 8px; font-weight: 800; }
+.skill-change-details { display: grid; }
+.skill-change-details > div { display: grid; grid-template-columns: minmax(80px, .8fr) minmax(100px, 1.2fr); gap: 8px; padding: 8px 10px; border-bottom: 1px solid #e8eaf2; font-size: 9px; }
+.skill-change-details > div:last-child { border-bottom: 0; }
+.skill-change-details span { color: #737b91; font-weight: 750; }
+.skill-change-details strong, .skill-change-details code, .skill-change-details small { color: #38415d; overflow-wrap: anywhere; }
+.skill-change-tools, .skill-change-workflow { grid-template-columns: 1fr !important; }
+.skill-change-workflow ol { margin: 3px 0 0; padding-left: 17px; color: #444d68; }
+.skill-change-workflow li { margin: 3px 0; }
+.skill-delete-approve { color: white; background: #a43c48; border: 1px solid #a43c48; }
+.skill-change-card.approved { border-color: #b9dfca; }
+.skill-change-card.approved .skill-change-heading { background: #edf9f2; border-color: #cae8d6; }
+.skill-change-card.approved .skill-change-heading > span { color: #276846; background: #d7f0e1; }
+.skill-change-card.rejected { opacity: .65; }
+.skill-change-card.rejected .skill-change-heading > span { color: #686f80; background: #e5e7ec; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
 .markdown-body h1,
@@ -154,7 +221,6 @@ textarea:focus { border-color: #7165df; box-shadow: 0 0 0 3px rgba(113, 101, 223
 .privacy-footer { margin: 13px 16px 0; color: #9298aa; text-align: center; font-size: 9px; }
 
 @media (max-width: 330px) {
-  .quick-grid { grid-template-columns: 1fr; }
   .composer-footer span { display: none; }
   .composer-footer { justify-content: flex-end; }
 }

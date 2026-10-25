@@ -1,15 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildChatMessages, QUICK_ACTIONS } from '../lib/prompts';
-
-describe('quick actions', () => {
-  it('only offers marketing-list creation', () => {
-    expect(QUICK_ACTIONS).toHaveLength(1);
-    expect(QUICK_ACTIONS[0]).toMatchObject({
-      id: 'create-marketing-list',
-      label: 'Create marketing list'
-    });
-  });
-});
+import { buildChatMessages } from '../lib/prompts';
 
 describe('buildChatMessages', () => {
   it('includes recent conversation history before the new question', () => {
