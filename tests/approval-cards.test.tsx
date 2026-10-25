@@ -20,6 +20,7 @@ function approvalActions(): ApprovalActions {
     setSkillChangeApprovals: vi.fn(),
     registerResponse: vi.fn(),
     approving: false,
+    blocked: false,
     approveMutation: vi.fn(),
     rejectMutation: vi.fn(),
     toggleMutationField: vi.fn(),

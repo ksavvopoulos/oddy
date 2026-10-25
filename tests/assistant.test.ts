@@ -169,6 +169,60 @@ describe('assistant orchestration', () => {
     );
   });
 
+  it('supplies the worker clock even when Dataverse tools are disabled', async () => {
+    vi.mocked(callAzureOpenAI).mockResolvedValue({ content: 'Today is known.' });
+    await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, false, false);
+    const sent = vi.mocked(callAzureOpenAI).mock.calls[0]?.[1];
+    expect(sent?.[0]?.content).toContain('Extension clock (authoritative');
+    expect(sent?.[0]?.content).toContain('rolling30Days');
+    expect(messages).toEqual([{ role: 'user', content: 'Help' }]);
+  });
+
+  it('stops a continuation before model calls when the active environment changed', async () => {
+    await expect(
+      runDataverseAssistant(
+        DEFAULT_SETTINGS.azureOpenAI,
+        messages,
+        true,
+        false,
+        undefined,
+        undefined,
+        {
+          expectedOrigin: 'https://other.crm.dynamics.com'
+        }
+      )
+    ).rejects.toThrow('environment changed');
+    expect(callAzureOpenAIResponses).not.toHaveBeenCalled();
+    expect(executeAssistantTool).not.toHaveBeenCalled();
+  });
+
+  it('intersects a resumed skill with its original tool ceiling', async () => {
+    vi.mocked(callAzureOpenAIResponses).mockResolvedValue({
+      id: 'done',
+      content: 'Done.',
+      toolCalls: []
+    });
+    const skill = BUILT_IN_SKILLS[0]!;
+    await runDataverseAssistant(
+      DEFAULT_SETTINGS.azureOpenAI,
+      messages,
+      true,
+      false,
+      undefined,
+      {
+        skill,
+        run: {
+          skillId: skill.id,
+          inputValues: { listName: 'Test', listType: 'static', memberType: 'contact' }
+        }
+      },
+      { skillToolLimit: ['resolve_dataverse_schema'] }
+    );
+    expect(names(vi.mocked(callAzureOpenAIResponses).mock.calls[0]?.[1].tools || [])).toEqual([
+      'resolve_dataverse_schema'
+    ]);
+  });
+
   it('stops a runaway model tool loop', async () => {
     vi.mocked(callAzureOpenAIResponses).mockResolvedValue({
       id: 'r',

@@ -96,7 +96,11 @@ async function handleMessage(message: ExtensionMessage): Promise<MessageResult<u
         message.payload.allowDataverseTools === true,
         message.payload.allowSkillTools === true,
         message.payload.requestId,
-        skill && skillRun ? { skill, run: skillRun } : undefined
+        skill && skillRun ? { skill, run: skillRun } : undefined,
+        {
+          expectedOrigin: message.payload.expectedOrigin,
+          skillToolLimit: message.payload.skillToolLimit
+        }
       );
       return { ok: true, data: response };
     }

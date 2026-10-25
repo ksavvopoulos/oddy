@@ -19,7 +19,7 @@ export function RecordChangeCards({ item, approvals }: Props) {
               selectedColumns: mutation.fields.map((field) => field.logicalName),
               status: 'pending' as const
             };
-            const editable = canEditApproval(approval, item.historical);
+            const editable = !approvals.blocked && canEditApproval(approval, item.historical);
             return (
               <section key={mutation.id} className={`mutation-card ${approval.status}`}>
                 <div className="mutation-heading">
@@ -133,7 +133,7 @@ export function ListMembershipCards({ item, approvals }: Props) {
               selectedMemberIds: membership.members.map((member) => member.recordId),
               status: 'pending' as const
             };
-            const editable = canEditApproval(approval, item.historical);
+            const editable = !approvals.blocked && canEditApproval(approval, item.historical);
             return (
               <section key={membership.id} className={`mutation-card ${approval.status}`}>
                 <div className="mutation-heading">
@@ -233,7 +233,7 @@ export function SkillChangeCards({ item, approvals }: Props) {
         <div className="skill-change-list">
           {item.pendingSkillChanges.map((change) => {
             const approval = skillChangeApprovals[change.id] || { status: 'pending' as const };
-            const editable = canEditApproval(approval, item.historical);
+            const editable = !approvals.blocked && canEditApproval(approval, item.historical);
             const preview = change.after || change.before;
             return (
               <section key={change.id} className={`skill-change-card ${approval.status}`}>

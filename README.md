@@ -24,6 +24,8 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 - Uses the tenant-advertised `AddListMembersList` action to add up to 50 selected members in one approved Dataverse request, excluding existing members first
 - Refreshes the matching open form or list after approved writes, while protecting forms with other unsaved changes
 - Includes recent conversation turns, tool calls, and approved execution successes or failures as authoritative audit details for follow-up requests
+- Automatically resumes unfinished live requests after successful record or membership approvals, using the original intent and exact saved IDs; every additional write needs fresh approval
+- Supplies the browser clock and an exact rolling UTC 30-day interval so relative-date queries do not require asking for today’s date
 - Provides opt-in local conversation history using IndexedDB, with resume, individual deletion, clear-all, retention, and count limits
 - Restores historical approval cards as read-only and requires fresh previews before any resumed write
 - Shows the selected record payload and reports which primitives were executed
@@ -123,6 +125,7 @@ lib/
   dataverse/              Primitive request/result and metadata contracts
   dataverse-primitives.ts Self-contained signed-session page executor
   approvals.ts            Shared approval rules and synchronous execution lock
+  approval-continuation.ts Request-scoped post-approval continuation guards
   conversation-model.ts   Transcript contracts, restoration, authoritative history
   conversations.ts        IndexedDB repository and atomic save/pruning
   history-policy.ts       Shared retention/default/limit policy
@@ -149,7 +152,8 @@ Development commands:
 - Web API fallback labels are derived from logical names; localized Dataverse display-name metadata is not loaded yet.
 - Relationship discovery currently supports direct one-to-many and many-to-one metadata. Many-to-many and indirect paths are not supported yet.
 - Related-table display-name resolution may require loading the environment's table catalog when a logical name is not known.
-- Only the eight most recent visible turns are sent to Azure OpenAI for a request. When local history is enabled, the full visible transcript remains available locally for browsing and resuming.
+- Only the eight most recent visible turns are sent to Azure OpenAI for a request. Automatic approval continuations also include the original request and the approved execution outcome so IDs and intent are not lost. When local history is enabled, the full visible transcript remains available locally for browsing and resuming.
+- Automatic continuation applies only to successful live business-record or membership approvals. It stops on failure, rejection, changed environment, revoked consent, or a newer user request. Restored histories never automatically resume; ask Oddy to continue an existing task explicitly.
 - Local conversation history is protected by the Chrome profile and operating-system account but is not independently encrypted by Oddy.
 - Custom skills currently use a restricted, model-executed workflow: tool access and inputs are enforced by the extension, while ordered workflow instructions are followed by the model. Arbitrary scripts and imported skill packages are not supported.
 - AI-assisted skill management is limited to custom skills and must be enabled per request or by default in settings. Skill changes are atomic; individual workflow fields cannot yet be selectively approved.

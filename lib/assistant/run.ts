@@ -12,6 +12,7 @@ import type {
   LlmResponse,
   OddySkill,
   OddySkillRun,
+  OddySkillToolName,
   PreparedDataverseMutation,
   PreparedMarketingListMembership,
   PreparedOddySkillChange,
@@ -21,6 +22,7 @@ import { selectAssistantTools } from './tool-catalog';
 import type { AssistantToolResult } from './contracts';
 import { executeAssistantTool } from './execute-tool';
 import { activityForTool } from './activity';
+import { withRuntimeClock } from './runtime-clock';
 
 export async function runDataverseAssistant(
   settings: AzureOpenAISettings,
@@ -28,13 +30,20 @@ export async function runDataverseAssistant(
   allowDataverseTools: boolean,
   allowSkillTools: boolean,
   requestId?: string,
-  skillExecution?: { skill: OddySkill; run: OddySkillRun }
+  skillExecution?: { skill: OddySkill; run: OddySkillRun },
+  limits: { expectedOrigin?: string; skillToolLimit?: OddySkillToolName[] } = {}
 ): Promise<LlmResponse> {
+  inputMessages = withRuntimeClock(inputMessages);
   if (!allowDataverseTools && !allowSkillTools) {
     return callAzureOpenAI(settings, inputMessages);
   }
 
   const context = await getActiveDataverseContext();
+  if (limits.expectedOrigin && context.origin !== limits.expectedOrigin) {
+    throw new Error(
+      'The active Dataverse environment changed. Return to the original environment before continuing.'
+    );
+  }
   if (allowDataverseTools && (!context.isDataverse || !context.origin)) {
     if (skillExecution) {
       throw new Error('Return to an active Dataverse page before running this skill.');
@@ -62,6 +71,7 @@ export async function runDataverseAssistant(
       `For a business-record update: query and uniquely identify the record, then prepare a field-level change proposal. ` +
       `For a new business record: prepare a create proposal with all known field values. Choice labels may be passed directly and are resolved to numeric options from Dataverse metadata. For lookup fields, resolve the column targets, query the exact target record, and pass its table and record ID in the lookup value. ` +
       `For adding accounts, contacts, or leads to a marketing list: query the exact list and every intended member, then prepare one bulk marketing-list membership proposal. Do not use ordinary record creation or claim members were added before approval. ` +
+      `For multi-step requests, stop at each approval boundary. After a successful approval the extension sends an automatic continuation with the original request and exact result IDs; complete only the unfinished steps and never repeat the successful write. ` +
       `Prepared record and marketing-list membership changes require an explicit approval click in the extension; never claim a proposed change was applied. ` +
       `Navigation results report whether the destination loaded or only started; never claim it loaded when navigationState is started. ` +
       `Never ask the user to click a row, supply a record ID, apply a manual filter, or follow a link when these primitives can complete the request. ` +
@@ -84,7 +94,9 @@ export async function runDataverseAssistant(
   const activeTools = selectAssistantTools({
     allowDataverseTools,
     allowSkillTools,
-    skillTools: skillExecution?.skill.allowedTools
+    skillTools: skillExecution?.skill.allowedTools.filter(
+      (tool) => !limits.skillToolLimit || limits.skillToolLimit.includes(tool)
+    )
   });
   const allowedToolNames = new Set(activeTools.map((tool) => tool.function.name));
   if (activeTools.length === 0) {

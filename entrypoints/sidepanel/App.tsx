@@ -13,8 +13,15 @@ import {
 import {
   conversationMessages,
   restoreConversation,
-  type StoredTranscriptItem as TranscriptItem
+  type StoredTranscriptItem as TranscriptItem,
+  type ConversationRequestContext
 } from '../../lib/conversation-model';
+import {
+  approvalContinuationPrompt,
+  createContinuationGuard,
+  decideApprovalContinuation,
+  type ApprovalContinuation
+} from '../../lib/approval-continuation';
 import { errorMessage, sendExtensionMessage } from '../../lib/messages';
 import { buildChatMessages, contextAsText, filterContextFields } from '../../lib/prompts';
 import { getAvailableSkills, SKILLS_KEY, validateSkillRunInputs } from '../../lib/skills';
@@ -42,6 +49,8 @@ export function App() {
   const [loadingContext, setLoadingContext] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
+  const [pendingContinuation, setPendingContinuation] = useState<ApprovalContinuation>();
+  const [claimContinuation] = useState(createContinuationGuard);
   const [navigationProgress, setNavigationProgress] = useState<NavigationProgress>();
   const [skills, setSkills] = useState<OddySkill[]>([]);
   const [activeSkill, setActiveSkill] = useState<OddySkill>();
@@ -85,6 +94,7 @@ export function App() {
 
   const startNewConversation = useCallback(() => {
     setTranscript([]);
+    setPendingContinuation(undefined);
     setMutationApprovals({});
     setListMembershipApprovals({});
     setSkillChangeApprovals({});
@@ -103,6 +113,7 @@ export function App() {
       const stored = await getConversation(id);
       if (!stored) throw new Error('The selected conversation no longer exists.');
       const restored = restoreConversation(stored);
+      setPendingContinuation(undefined);
       setTranscript(restored.transcript);
       setMutationApprovals(restored.mutationApprovals);
       setListMembershipApprovals(restored.listMembershipApprovals);
@@ -139,7 +150,15 @@ export function App() {
     }
   }, []);
 
-  const approvals = useApprovals({ transcript, setTranscript, loadContext, loadSkills });
+  const approvals = useApprovals({
+    conversationId,
+    transcript,
+    setTranscript,
+    loadContext,
+    loadSkills,
+    blocked: sending || historyLoading,
+    onBusinessApproved: setPendingContinuation
+  });
   const {
     mutationApprovals,
     setMutationApprovals,
@@ -248,8 +267,13 @@ export function App() {
     });
   };
 
-  const sendPrompt = async (prompt: string, skillRun?: OddySkillRun) => {
-    if (!prompt || !settings || busy) return;
+  const sendPrompt = async (
+    prompt: string,
+    skillRun?: OddySkillRun,
+    continuationRequest?: ConversationRequestContext
+  ) => {
+    if (!prompt || !settings || busy || activeRequestId.current) return;
+    skillRun = continuationRequest?.skillRun || skillRun;
     if (!configured) {
       setError('Configure Azure OpenAI before sending a request.');
       return;
@@ -264,11 +288,30 @@ export function App() {
     setNavigationProgress(undefined);
     setSending(true);
     setError(undefined);
-    const userItem: TranscriptItem = { id: crypto.randomUUID(), role: 'user', content: prompt };
-    setTranscript((current) => [...current, userItem]);
+    const requestContext: ConversationRequestContext = continuationRequest || {
+      requestId,
+      prompt,
+      environmentOrigin: context?.origin,
+      allowDataverseTools: includeContext,
+      allowSkillTools: !skillRun && allowSkillManagement,
+      skillRun,
+      skillToolLimit: skillRun
+        ? skills.find((skill) => skill.id === skillRun.skillId)?.allowedTools
+        : undefined
+    };
+    if (!continuationRequest) {
+      const userItem: TranscriptItem = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: prompt,
+        requestContext
+      };
+      setTranscript((current) => [...current, userItem]);
+    }
 
     try {
-      const suppliedContext = includeContext && context?.isDataverse ? context : undefined;
+      const suppliedContext =
+        requestContext.allowDataverseTools && context?.isDataverse ? context : undefined;
       const history = conversationMessages(transcript);
       const messages = buildChatMessages(
         settings.azureOpenAI.systemPrompt,
@@ -281,10 +324,12 @@ export function App() {
         type: 'LLM_CHAT',
         payload: {
           messages,
-          allowDataverseTools: includeContext,
-          allowSkillTools: !skillRun && allowSkillManagement,
+          allowDataverseTools: requestContext.allowDataverseTools,
+          allowSkillTools: requestContext.allowSkillTools,
           requestId,
-          skillRun
+          skillRun,
+          expectedOrigin: continuationRequest?.environmentOrigin,
+          skillToolLimit: requestContext.skillToolLimit
         }
       });
       if (!result.ok || !result.data)
@@ -299,7 +344,8 @@ export function App() {
           toolsUsed: result.data!.toolsUsed,
           pendingMutations: result.data!.pendingMutations,
           pendingListMemberships: result.data!.pendingListMemberships,
-          pendingSkillChanges: result.data!.pendingSkillChanges
+          pendingSkillChanges: result.data!.pendingSkillChanges,
+          requestContext
         }
       ]);
       if (skillRun) {
@@ -307,13 +353,51 @@ export function App() {
         setSkillInputValues({});
       }
     } catch (requestError) {
-      setError(errorMessage(requestError));
+      setError(
+        continuationRequest
+          ? `The approved change succeeded, but Oddy could not continue: ${errorMessage(requestError)}. Ask Oddy to continue; do not recreate the saved record.`
+          : errorMessage(requestError)
+      );
     } finally {
       activeRequestId.current = undefined;
       setNavigationProgress(undefined);
       setSending(false);
     }
   };
+
+  useEffect(() => {
+    if (!pendingContinuation || sending || approving || loadingContext) return;
+    const decision = decideApprovalContinuation(pendingContinuation, {
+      conversationId,
+      transcript,
+      environmentOrigin: context?.origin,
+      allowDataverseTools: includeContext,
+      allowSkillTools: allowSkillManagement,
+      mutationApprovals,
+      listMembershipApprovals,
+      skillChangeApprovals
+    });
+    if (decision.action === 'wait') return;
+    setPendingContinuation(undefined);
+    if (decision.action === 'resume' && claimContinuation(pendingContinuation)) {
+      void sendPrompt(approvalContinuationPrompt(pendingContinuation), undefined, decision.request);
+    }
+  }, [
+    pendingContinuation,
+    sending,
+    approving,
+    loadingContext,
+    conversationId,
+    transcript,
+    context?.origin,
+    includeContext,
+    allowSkillManagement,
+    mutationApprovals,
+    listMembershipApprovals,
+    skillChangeApprovals,
+    claimContinuation,
+    sendPrompt
+  ]);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();

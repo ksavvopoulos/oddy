@@ -60,6 +60,21 @@ background execution message → environment/metadata revalidation → write
 8. Add tests for valid preview/execution, wrong environment, stale metadata, failures, selection limits, and restored read-only cards.
 9. Bump the package version with `npm version <version> --no-git-tag-version`. Build and verify `.output/chrome-mv3/manifest.json` matches `package.json`.
 
+## Continuing after an approval
+
+`lib/approval-continuation.ts` keeps automatic follow-up separate from mutation execution. Each live user request and assistant response carries optional request context: original prompt, request lineage, environment, consent flags, and any skill tool ceiling. Older saved conversations remain readable without it.
+
+After a successful record or membership approval, `useApprovals.ts` appends the actual execution result (including IDs) to the audit and queues a transient continuation event. The side panel waits for context refresh and outstanding sibling approvals, then sends one internal follow-up using that original scope. It does not append a synthetic user message. The next assistant response may prepare the next proposal, but never executes it.
+
+- A per-conversation/proposal guard prevents duplicate continuations, including React StrictMode effect replay.
+- A newer user request, restored history, changed environment, revoked consent, or failed/rejected sibling stops automatic continuation.
+- Custom-skill approvals do not independently trigger automatic continuation.
+- The background rechecks the expected origin before model/tool calls. Resumed skills intersect the current tool set with the original ceiling.
+- Follow-up provider failures leave the successful approval marked Applied; they do not retry the saved operation.
+- Events are not persisted and are not replayed when history is opened. Legacy conversations require an explicit follow-up request.
+
+`lib/assistant/runtime-clock.ts` supplies authoritative worker time, local date/time zone, and a computed rolling 30-day UTC range on each request. The model can use `createdon ge` and `createdon le` with those timestamps rather than guessing today or doing calendar arithmetic. Calendar-day requests remain distinct from rolling-duration requests.
+
 ## Why the injected executor is intentionally self-contained
 
 `chrome.scripting.executeScript({ func })` serializes a function, not its module graph. Moving helpers into ordinary imports would compile successfully but fail in the Dataverse page because those imports are absent.
@@ -85,6 +100,9 @@ Tests are divided by boundary:
 - `tool-dispatch.test.ts`: argument parsing and preparation-only routing.
 - `approvals.test.ts`: lifecycle rules, duplicate execution, failures, and history guards without React.
 - `approval-cards.test.tsx`: server-rendered live, historical, and failed cards without browser dependencies.
+- `approval-continuation.test.ts`: continuation scope, original intent/result IDs, consent, sibling approvals, and deduplication.
+- `approval-continuation-ui.test.tsx`: the real side panel under React StrictMode in Happy DOM; verifies create → continue → membership preview → fresh approval, plus failure handling.
+- `runtime-clock.test.ts`: exact rolling intervals across year boundaries and leap years.
 - `conversation-model.test.ts`: backward-compatible restoration and authoritative outcome serialization.
 - `conversations.test.ts`: real IndexedDB API semantics via `fake-indexeddb`, atomic save/retention, CRUD, and policy decisions.
 - `browser.test.ts`: origin checks, injection contract, serialization safety, and navigation matching.
@@ -96,7 +114,7 @@ No test needs live credentials or a Dataverse tenant. That also means tests do *
 1. Load `.output/chrome-mv3`, open a Dataverse app, and verify context detection.
 2. Query records, create/update `AI Result`, and navigate to a record.
 3. Prepare a record change; deselect/reselect fields; reject it. Prepare another and approve it.
-4. Prepare a static-list bulk membership change; verify one approved `AddListMembersList` request. Check dynamic-list rejection.
+4. Ask to create a static marketing list and add contacts created in the last 30 days. Approve creation; Oddy should automatically use the saved list ID and prepare the matching members. Approve membership separately and verify one `AddListMembersList` request. Check dynamic-list rejection.
 5. Trigger an execution failure and confirm the next assistant turn receives the exact audit error and requires a fresh preview.
 6. Enable local history; resume a conversation. Old cards must have no approval buttons; new requests must still work. Delete a conversation and clear all.
 7. Verify a custom-skill change still requires approval and bundled skills remain immutable.

@@ -1,6 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { canEditApproval, createApprovalExecutor, toggleSelection } from '../../lib/approvals';
+import {
+  createApprovalContinuation,
+  type ApprovalContinuation,
+  type BusinessProposalKind
+} from '../../lib/approval-continuation';
 import type {
   ApprovalState,
   StoredTranscriptItem,
@@ -36,8 +41,9 @@ function useApprovalQueue<
   successActivity: (result: Result) => Omit<ToolActivity, 'name'>;
   failureLabel: string;
   isHistorical: (id: string) => boolean;
+  blocked: boolean;
   activity: (id: string, activity: ToolActivity) => void;
-  afterSuccess: () => void;
+  afterSuccess: (proposal: Proposal, result: Result, activity: ToolActivity) => void;
 }) {
   const [states, setReactStates] = useState<StateMap<State>>({});
   const current = useRef(states);
@@ -63,7 +69,7 @@ function useApprovalQueue<
 
   const approve = async (proposal: Proposal) => {
     const state = current.current[proposal.id];
-    if (!state) return;
+    if (!state || config.blocked) return;
     await execute<Result>({
       id: proposal.id,
       getState: () => current.current[proposal.id],
@@ -84,8 +90,9 @@ function useApprovalQueue<
           ...existing,
           [proposal.id]: { ...state, status: 'approved', result, error: undefined }
         }));
-        config.activity(proposal.id, { name: config.name, ...config.successActivity(result) });
-        config.afterSuccess();
+        const activity = { name: config.name, ...config.successActivity(result) };
+        config.activity(proposal.id, activity);
+        config.afterSuccess(proposal, result, activity);
       },
       failure: (error) => {
         const detail = errorMessage(error);
@@ -107,6 +114,9 @@ function useApprovalQueue<
 }
 
 export function useApprovals(options: {
+  conversationId: string;
+  blocked: boolean;
+  onBusinessApproved: (event: ApprovalContinuation) => void;
   transcript: StoredTranscriptItem[];
   setTranscript: Dispatch<SetStateAction<StoredTranscriptItem[]>>;
   loadContext: () => Promise<void>;
@@ -121,6 +131,20 @@ export function useApprovals(options: {
       )
     );
   };
+  const continueBusinessRequest = (
+    kind: BusinessProposalKind,
+    id: string,
+    outcome: ToolActivity
+  ) => {
+    const event = createApprovalContinuation(
+      options.conversationId,
+      options.transcript,
+      kind,
+      id,
+      outcome
+    );
+    if (event) options.onBusinessApproved(event);
+  };
   const isHistorical = (kind: ProposalKind) => (id: string) =>
     options.transcript.some(
       (item) => item.historical && item[kind]?.some((proposal) => proposal.id === id)
@@ -132,6 +156,7 @@ export function useApprovals(options: {
     StoredMutationApprovalState
   >({
     name: 'execute_dataverse_mutation',
+    blocked: options.blocked,
     initial: (proposal) => ({
       status: 'pending',
       selectedColumns: proposal.fields.map((field) => field.logicalName)
@@ -146,13 +171,14 @@ export function useApprovals(options: {
     successActivity: (result) => ({
       label: 'Applied approved record change',
       summary: `${result.changedColumns.length} field${result.changedColumns.length === 1 ? '' : 's'} changed`,
-      details: `${result.tableLogicalName} ${result.recordId}`
+      details: JSON.stringify(result)
     }),
     failureLabel: 'Approved record change failed',
     isHistorical: isHistorical('pendingMutations'),
     activity: activity('pendingMutations'),
-    afterSuccess: () => {
+    afterSuccess: (proposal, _result, activity) => {
       void options.loadContext();
+      continueBusinessRequest('pendingMutations', proposal.id, activity);
     }
   });
   const memberships = useApprovalQueue<
@@ -161,6 +187,7 @@ export function useApprovals(options: {
     StoredListMembershipApprovalState
   >({
     name: 'execute_marketing_list_membership',
+    blocked: options.blocked,
     initial: (proposal) => ({
       status: 'pending',
       selectedMemberIds: proposal.members.map((member) => member.recordId)
@@ -175,13 +202,14 @@ export function useApprovals(options: {
     successActivity: (result) => ({
       label: `Added members to ${result.listName}`,
       summary: `${result.addedMemberIds.length} member${result.addedMemberIds.length === 1 ? '' : 's'} added with AddListMembersList`,
-      details: result.addedMemberNames.join('; ')
+      details: JSON.stringify(result)
     }),
     failureLabel: 'Approved marketing-list membership failed',
     isHistorical: isHistorical('pendingListMemberships'),
     activity: activity('pendingListMemberships'),
-    afterSuccess: () => {
+    afterSuccess: (proposal, _result, activity) => {
       void options.loadContext();
+      continueBusinessRequest('pendingListMemberships', proposal.id, activity);
     }
   });
   const skills = useApprovalQueue<
@@ -190,6 +218,7 @@ export function useApprovals(options: {
     StoredSkillChangeApprovalState
   >({
     name: 'execute_oddy_skill_change',
+    blocked: options.blocked,
     initial: () => ({ status: 'pending' }),
     request: (change) => ({ type: 'EXECUTE_ODDY_SKILL_CHANGE', payload: { change } }),
     successActivity: (result) => ({
@@ -206,6 +235,7 @@ export function useApprovals(options: {
   });
 
   return {
+    blocked: options.blocked,
     mutationApprovals: mutations.states,
     setMutationApprovals: mutations.setStates,
     listMembershipApprovals: memberships.states,

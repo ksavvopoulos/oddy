@@ -5,7 +5,9 @@ import type {
   PreparedDataverseMutation,
   PreparedMarketingListMembership,
   PreparedOddySkillChange,
-  ToolActivity
+  ToolActivity,
+  OddySkillRun,
+  OddySkillToolName
 } from './types';
 
 /** Shared in-memory and persisted contracts. Keep additions optional for older histories. */
@@ -14,6 +16,16 @@ export interface ApprovalState<Result> {
   status: ApprovalStatus;
   result?: Result;
   error?: string;
+}
+
+export interface ConversationRequestContext {
+  requestId: string;
+  prompt: string;
+  environmentOrigin?: string;
+  allowDataverseTools: boolean;
+  allowSkillTools: boolean;
+  skillRun?: OddySkillRun;
+  skillToolLimit?: OddySkillToolName[];
 }
 
 export interface StoredTranscriptItem {
@@ -25,6 +37,7 @@ export interface StoredTranscriptItem {
   pendingListMemberships?: PreparedMarketingListMembership[];
   pendingSkillChanges?: PreparedOddySkillChange[];
   historical?: boolean;
+  requestContext?: ConversationRequestContext;
 }
 
 export interface StoredMutationApprovalState extends ApprovalState<DataverseMutationExecutionResult> {

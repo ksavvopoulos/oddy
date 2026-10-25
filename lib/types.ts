@@ -230,6 +230,8 @@ export interface LlmRequest {
   allowSkillTools?: boolean;
   requestId?: string;
   skillRun?: OddySkillRun;
+  expectedOrigin?: string;
+  skillToolLimit?: OddySkillToolName[];
 }
 
 export interface NavigationProgress {
