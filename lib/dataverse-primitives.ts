@@ -783,7 +783,12 @@ export async function executeDataversePrimitive(
   const resolveAddListMembersSignature = async (): Promise<DataverseActionSignature> => {
     const response = await fetch(`${request.origin}/api/data/v9.2/$metadata`, {
       credentials: 'include',
-      headers
+      // The CSDL metadata document is XML, unlike the JSON data endpoints.
+      headers: {
+        Accept: 'application/xml',
+        'OData-MaxVersion': '4.0',
+        'OData-Version': '4.0'
+      }
     });
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 500);

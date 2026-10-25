@@ -693,6 +693,17 @@ describe('Dataverse structured primitives', () => {
 
     expect(applied.ok).toBe(true);
     expect(applied.listMembershipResult?.addedMemberIds).toHaveLength(2);
+    // Both preparation and approval-time revalidation must negotiate XML.
+    const metadataCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/$metadata'));
+    expect(metadataCalls).toHaveLength(2);
+    for (const [, options] of metadataCalls) {
+      const requestHeaders = new Headers(options?.headers);
+      expect(requestHeaders.get('Accept')).toBe('application/xml');
+      expect(requestHeaders.has('Content-Type')).toBe(false);
+      expect(requestHeaders.get('OData-Version')).toBe('4.0');
+      expect(options?.credentials).toBe('include');
+    }
+    expect(new Headers(fetchMock.mock.calls[18]?.[1]?.headers).get('Accept')).toBe('application/json');
     expect(fetchMock.mock.calls[18]?.[0]).toBe(
       'https://contoso.crm.dynamics.com/api/data/v9.2/AddListMembersList'
     );
