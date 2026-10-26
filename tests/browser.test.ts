@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { navigationUrlsMatch } from '../lib/browser/navigation';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeDataversePrimitive } from '../lib/dataverse-primitives';
+import { getActiveDataverseContext } from '../lib/browser/context';
+import { collectDataverseUserContext } from '../lib/dataverse-user-context';
+import { collectXrmPageContext } from '../lib/dataverse-context';
 
 afterEach(() => vi.unstubAllGlobals());
 const origin = 'https://contoso.crm.dynamics.com';
@@ -74,6 +77,107 @@ describe('browser boundary', () => {
     });
     expect(result.ok).toBe(true);
     expect(result.resolvedColumns?.[0]?.logicalName).toBe('firstname');
+  });
+});
+
+describe('current user context wiring', () => {
+  const currentUser = {
+    source: 'webApi',
+    observedAtUtc: '2026-01-15T23:30:00Z',
+    timeZoneCode: 130,
+    localDate: '2026-01-16'
+  };
+  const form = {
+    source: 'xrm',
+    tableLogicalName: 'contact',
+    fields: [{ logicalName: 'fullname', label: 'Name', value: 'Ada' }]
+  };
+
+  it('keeps user settings even when form fields cause an early return', async () => {
+    const executeScript = vi.fn(async ({ func }: { func: unknown }) => [
+      { result: func === collectDataverseUserContext ? currentUser : form }
+    ]);
+    vi.stubGlobal('chrome', {
+      tabs: { query: async () => [{ id: 1, url: `${origin}/main.aspx` }] },
+      scripting: { executeScript }
+    });
+    const result = await getActiveDataverseContext();
+    expect(result.currentUser).toEqual(currentUser);
+    expect(result.fields).toHaveLength(1);
+    expect(executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        world: 'MAIN',
+        func: collectDataverseUserContext,
+        args: [{ origin, utcNow: expect.any(String) }]
+      })
+    );
+  });
+
+  it('reads user settings on list pages without form fields', async () => {
+    const executeScript = vi.fn(async ({ func }: { func: unknown }) => [
+      { result: func === collectDataverseUserContext ? currentUser : { source: 'url' } }
+    ]);
+    vi.stubGlobal('chrome', {
+      tabs: {
+        query: async () => [{ id: 1, url: `${origin}/main.aspx?pagetype=entitylist&etn=list` }]
+      },
+      scripting: { executeScript }
+    });
+    expect((await getActiveDataverseContext()).currentUser).toEqual(currentUser);
+  });
+
+  it('preserves user settings through the record Web API fallback', async () => {
+    const executeScript = vi.fn(async ({ func }: { func: unknown }) => [
+      {
+        result:
+          func === collectDataverseUserContext
+            ? currentUser
+            : func === collectXrmPageContext
+              ? { source: 'url' }
+              : form
+      }
+    ]);
+    vi.stubGlobal('chrome', {
+      tabs: {
+        query: async () => [
+          { id: 1, url: `${origin}/main.aspx?etn=contact&id=00000000-0000-0000-0000-000000000123` }
+        ]
+      },
+      scripting: { executeScript }
+    });
+    const result = await getActiveDataverseContext();
+    expect(result.currentUser).toEqual(currentUser);
+    expect(result.fields).toHaveLength(1);
+  });
+
+  it('can skip Dataverse user reads when only custom-skill tools are allowed', async () => {
+    const executeScript = vi.fn(async () => [{ result: form }]);
+    vi.stubGlobal('chrome', {
+      tabs: { query: async () => [{ id: 1, url: `${origin}/main.aspx` }] },
+      scripting: { executeScript }
+    });
+    expect(
+      (await getActiveDataverseContext({ includeUserSettings: false })).currentUser
+    ).toBeUndefined();
+    expect(executeScript).toHaveBeenCalledTimes(1);
+    expect(executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ func: collectXrmPageContext })
+    );
+  });
+
+  it('reports user lookup errors without breaking ordinary form context', async () => {
+    const executeScript = vi.fn(async ({ func }: { func: unknown }) => {
+      if (func === collectDataverseUserContext) throw new Error('Injection unavailable');
+      return [{ result: form }];
+    });
+    vi.stubGlobal('chrome', {
+      tabs: { query: async () => [{ id: 1, url: `${origin}/main.aspx` }] },
+      scripting: { executeScript }
+    });
+    const result = await getActiveDataverseContext();
+    expect(result.fields).toHaveLength(1);
+    expect(result.currentUser?.source).toBe('unavailable');
+    expect(result.currentUser?.warning).toContain('Injection unavailable');
   });
 });
 

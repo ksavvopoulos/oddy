@@ -3,11 +3,13 @@ import type {
   StoredTranscriptItem,
   StoredMutationApprovalState,
   StoredListMembershipApprovalState,
-  StoredSkillChangeApprovalState
+  StoredSkillChangeApprovalState,
+  StoredBulkJobApprovalState
 } from './conversation-model';
 import type { ToolActivity } from './types';
 
-export type BusinessProposalKind = 'pendingMutations' | 'pendingListMemberships';
+export type BusinessProposalKind =
+  'pendingMutations' | 'pendingListMemberships' | 'pendingBulkJobs';
 
 /** Transient only: never persist or replay an automatic continuation job. */
 export interface ApprovalContinuation {
@@ -49,6 +51,7 @@ export function decideApprovalContinuation(
     mutationApprovals: Record<string, StoredMutationApprovalState>;
     listMembershipApprovals: Record<string, StoredListMembershipApprovalState>;
     skillChangeApprovals: Record<string, StoredSkillChangeApprovalState>;
+    bulkJobApprovals?: Record<string, StoredBulkJobApprovalState>;
   }
 ): { action: 'skip' | 'wait' } | { action: 'resume'; request: ConversationRequestContext } {
   const source = state.transcript.find((item) => item.id === event.sourceMessageId);
@@ -68,7 +71,9 @@ export function decideApprovalContinuation(
   const approvedState =
     event.kind === 'pendingMutations'
       ? state.mutationApprovals[event.proposalId]
-      : state.listMembershipApprovals[event.proposalId];
+      : event.kind === 'pendingBulkJobs'
+        ? state.bulkJobApprovals?.[event.proposalId]
+        : state.listMembershipApprovals[event.proposalId];
   if (approvedState?.status !== 'approved') return { action: 'skip' };
 
   // Wait for the user to resolve sibling proposals; never approve them implicitly.
@@ -85,7 +90,8 @@ export function decideApprovalContinuation(
         item.pendingListMemberships?.some((p) =>
           stopped(state.listMembershipApprovals[p.id]?.status)
         ) ||
-        item.pendingSkillChanges?.some((p) => stopped(state.skillChangeApprovals[p.id]?.status))
+        item.pendingSkillChanges?.some((p) => stopped(state.skillChangeApprovals[p.id]?.status)) ||
+        item.pendingBulkJobs?.some((p) => stopped(state.bulkJobApprovals?.[p.id]?.status))
     )
   )
     return { action: 'skip' };
@@ -96,7 +102,10 @@ export function decideApprovalContinuation(
         item.pendingListMemberships?.some((p) =>
           unresolved(state.listMembershipApprovals[p.id]?.status)
         ) ||
-        item.pendingSkillChanges?.some((p) => unresolved(state.skillChangeApprovals[p.id]?.status))
+        item.pendingSkillChanges?.some((p) =>
+          unresolved(state.skillChangeApprovals[p.id]?.status)
+        ) ||
+        item.pendingBulkJobs?.some((p) => unresolved(state.bulkJobApprovals?.[p.id]?.status))
     )
   )
     return { action: 'wait' };

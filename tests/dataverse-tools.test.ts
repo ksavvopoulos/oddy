@@ -305,7 +305,6 @@ describe('Dataverse structured primitives', () => {
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(entityMetadata), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(attributes), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(attributes), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ value: [] }), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ userqueryid: '00000000-0000-0000-0000-000000000099' }), {
@@ -335,7 +334,7 @@ describe('Dataverse structured primitives', () => {
         created: true
       })
     );
-    const createBody = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
+    const createBody = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
     expect(createBody.fetchxml).toContain('attribute="new_registrationstoreid"');
     expect(createBody.layoutxml).toContain('name="new_registrationstoreid"');
   });
@@ -357,7 +356,6 @@ describe('Dataverse structured primitives', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(entityMetadata), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(attributes), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(attributes), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
@@ -404,9 +402,9 @@ describe('Dataverse structured primitives', () => {
         created: false
       })
     );
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(fetchMock.mock.calls[4]?.[1]?.method).toBe('PATCH');
-    expect(String(fetchMock.mock.calls[4]?.[0])).toContain('userqueries(contact-view)');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[3]?.[1]?.method).toBe('PATCH');
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain('userqueries(contact-view)');
   });
 
   it('prepares an update preview without writing business data', async () => {

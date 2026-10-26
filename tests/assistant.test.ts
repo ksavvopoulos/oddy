@@ -12,6 +12,7 @@ import {
 import { DEFAULT_SETTINGS } from '../lib/storage';
 import { BUILT_IN_SKILLS } from '../lib/skills';
 import { recordProposal, membershipProposal, skillProposal } from './fixtures/proposals';
+import { bulkSummary } from './fixtures/bulk';
 
 vi.mock('../lib/azure-openai', () => ({
   callAzureOpenAI: vi.fn(),
@@ -176,6 +177,105 @@ describe('assistant orchestration', () => {
     expect(sent?.[0]?.content).toContain('Extension clock (authoritative');
     expect(sent?.[0]?.content).toContain('rolling30Days');
     expect(messages).toEqual([{ role: 'user', content: 'Help' }]);
+  });
+
+  it('collects a compact bulk preview without exposing an executor or row arrays', async () => {
+    const job = bulkSummary({
+      matched: 12000,
+      total: 12000,
+      remaining: 12000,
+      sample: [
+        {
+          recordId: 'private-row',
+          recordName: 'Private example name',
+          before: { secret: 'private-value' },
+          after: { secret: 'new-private-value' }
+        }
+      ]
+    });
+    vi.mocked(callAzureOpenAIResponses)
+      .mockResolvedValueOnce({
+        id: 'bulk-prepare',
+        toolCalls: [
+          { type: 'function_call', call_id: 'bulk', name: 'prepare_bulk_job', arguments: '{}' }
+        ]
+      })
+      .mockResolvedValueOnce({
+        id: 'bulk-done',
+        content: 'Approve the frozen job.',
+        toolCalls: []
+      });
+    vi.mocked(executeAssistantTool).mockResolvedValue({
+      ok: true,
+      action: 'prepare_bulk_job',
+      job
+    });
+    const result = await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, false);
+    expect(result.pendingBulkJobs).toEqual([job]);
+    const output = JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[1]?.[1].input);
+    expect(output.length).toBeLessThan(3000);
+    expect(output).not.toContain('runToken');
+    expect(output).not.toContain('private-value');
+    expect(output).not.toContain('Private example name');
+    expect(output).not.toContain('"rows"');
+    expect(vi.mocked(executeAssistantTool).mock.calls.map((call) => call[1])).toEqual([
+      'prepare_bulk_job'
+    ]);
+  });
+
+  it('supplies the signed-in user time settings automatically and audits the read', async () => {
+    vi.mocked(getActiveDataverseContext).mockResolvedValue({
+      isDataverse: true,
+      source: 'url',
+      origin: recordProposal.environmentOrigin,
+      fields: [],
+      capturedAt: 'now',
+      currentUser: {
+        source: 'webApi',
+        observedAtUtc: '2026-01-15T23:30:00Z',
+        timeZoneCode: 130,
+        timeZoneStandardName: 'GTB Standard Time',
+        localDate: '2026-01-16'
+      }
+    });
+    vi.mocked(callAzureOpenAIResponses).mockResolvedValue({
+      id: 'done',
+      content: 'The user date is known.',
+      toolCalls: []
+    });
+    const result = await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, false);
+    expect(getActiveDataverseContext).toHaveBeenCalledWith({ includeUserSettings: true });
+    const sent = vi.mocked(callAzureOpenAIResponses).mock.calls[0]?.[1].messages;
+    expect(sent?.[0]?.content).toContain('"localDate":"2026-01-16"');
+    expect(sent?.[0]?.content).toContain('GTB Standard Time');
+    expect(result.toolsUsed?.[0]).toMatchObject({
+      name: 'read_dataverse_user_settings',
+      label: 'Read current user time settings'
+    });
+  });
+
+  it('does not expose Dataverse user settings when only custom-skill tools are enabled', async () => {
+    vi.mocked(getActiveDataverseContext).mockResolvedValue({
+      isDataverse: true,
+      source: 'url',
+      fields: [],
+      capturedAt: 'now',
+      currentUser: {
+        source: 'webApi',
+        observedAtUtc: '2026-01-15T23:30:00Z',
+        timeZoneStandardName: 'Private configured zone'
+      }
+    });
+    vi.mocked(callAzureOpenAIResponses).mockResolvedValue({
+      id: 'done',
+      content: 'Skills only.',
+      toolCalls: []
+    });
+    await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, false, true);
+    expect(getActiveDataverseContext).toHaveBeenCalledWith({ includeUserSettings: false });
+    expect(JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[0]?.[1])).not.toContain(
+      'Private configured zone'
+    );
   });
 
   it('stops a continuation before model calls when the active environment changed', async () => {

@@ -13,6 +13,31 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
   }
 
   if ('action' in result) {
+    if (
+      result.action === 'prepare_bulk_job' ||
+      result.action === 'prepare_bulk_job_remaining' ||
+      result.action === 'get_bulk_job'
+    ) {
+      return {
+        name: toolName,
+        label: result.action === 'get_bulk_job' ? 'Read bulk job status' : 'Prepared bulk job',
+        summary: `${result.job?.total || 0} rows · ${result.job?.status || 'unknown'}`,
+        details: result.job
+          ? `Job ${result.job.id}; ${result.job.matched} matched, ${result.job.unchanged} already match/exist; ${result.job.succeeded} confirmed successful. No row arrays or execution tokens are included.`
+          : undefined
+      };
+    }
+    if (result.action === 'list_bulk_datasets')
+      return {
+        name: toolName,
+        label: 'Listed local bulk datasets',
+        summary: `${result.datasets?.length || 0} datasets`,
+        details: result.datasets
+          ?.map(
+            (dataset) => `${dataset.id}: ${dataset.rowCount} rows; ${dataset.columns.join(', ')}`
+          )
+          .join('; ')
+      };
     if (result.action === 'list_skills') {
       return {
         name: toolName,

@@ -1,4 +1,6 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { BulkJobSummary } from '../../lib/bulk/contracts';
+import { bulkAudit, executeApprovedBulkJob } from '../../lib/bulk/client';
 import type { Dispatch, SetStateAction } from 'react';
 import { canEditApproval, createApprovalExecutor, toggleSelection } from '../../lib/approvals';
 import {
@@ -11,7 +13,8 @@ import type {
   StoredTranscriptItem,
   StoredMutationApprovalState,
   StoredListMembershipApprovalState,
-  StoredSkillChangeApprovalState
+  StoredSkillChangeApprovalState,
+  StoredBulkJobApprovalState
 } from '../../lib/conversation-model';
 import { errorMessage, sendExtensionMessage } from '../../lib/messages';
 import type {
@@ -26,7 +29,8 @@ import type {
   ToolActivity
 } from '../../lib/types';
 
-type ProposalKind = 'pendingMutations' | 'pendingListMemberships' | 'pendingSkillChanges';
+type ProposalKind =
+  'pendingMutations' | 'pendingListMemberships' | 'pendingSkillChanges' | 'pendingBulkJobs';
 type StateMap<State> = Record<string, State>;
 
 /** One lifecycle for all approval kinds; adapters below supply only domain-specific details. */
@@ -38,6 +42,7 @@ function useApprovalQueue<
   name: string;
   initial: (proposal: Proposal) => State;
   request: (proposal: Proposal, state: State) => ExtensionMessage;
+  executeRequest?: (proposal: Proposal, state: State) => Promise<Result>;
   successActivity: (result: Result) => Omit<ToolActivity, 'name'>;
   failureLabel: string;
   isHistorical: (id: string) => boolean;
@@ -80,6 +85,7 @@ function useApprovalQueue<
           [proposal.id]: { ...state, status: 'approving', error: undefined }
         })),
       request: async () => {
+        if (config.executeRequest) return config.executeRequest(proposal, state);
         const response = await sendExtensionMessage<Result>(config.request(proposal, state));
         if (!response.ok || !response.data)
           throw new Error(response.error || 'The approved change returned no result.');
@@ -116,12 +122,24 @@ function useApprovalQueue<
 export function useApprovals(options: {
   conversationId: string;
   blocked: boolean;
+  allowBulkWrites?: boolean;
   onBusinessApproved: (event: ApprovalContinuation) => void;
   transcript: StoredTranscriptItem[];
   setTranscript: Dispatch<SetStateAction<StoredTranscriptItem[]>>;
   loadContext: () => Promise<void>;
   loadSkills: () => Promise<void>;
 }) {
+  const mounted = useRef(true);
+  const allowed = useRef(options.allowBulkWrites !== false);
+  allowed.current = options.allowBulkWrites !== false;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const stopping = useRef(new Set<string>());
+  const [bulkProgress, setBulkProgress] = useState<Record<string, BulkJobSummary>>({});
   const activity = (kind: ProposalKind) => (id: string, tool: ToolActivity) => {
     options.setTranscript((items) =>
       items.map((item) =>
@@ -234,8 +252,65 @@ export function useApprovals(options: {
     }
   });
 
+  const bulk = useApprovalQueue<BulkJobSummary, BulkJobSummary, StoredBulkJobApprovalState>({
+    name: 'execute_bulk_job',
+    blocked: options.blocked || options.allowBulkWrites === false,
+    initial: () => ({ status: 'pending' }),
+    request: (job) => ({
+      type: 'APPROVE_BULK_JOB',
+      payload: { id: job.id, revision: job.revision }
+    }),
+    executeRequest: (job, state) =>
+      executeApprovedBulkJob(job, {
+        send: sendExtensionMessage,
+        acknowledgeReadableScope: state.acknowledgeReadableScope,
+        allowed: () => mounted.current && allowed.current,
+        stopRequested: () => stopping.current.has(job.id),
+        progress: (summary) => {
+          if (mounted.current) setBulkProgress((existing) => ({ ...existing, [job.id]: summary }));
+        }
+      }),
+    successActivity: (result) => ({
+      label: 'Completed approved bulk job',
+      summary: `${result.succeeded} succeeded; ${result.skipped} skipped; ${result.remaining} remaining`,
+      details: JSON.stringify(bulkAudit(result))
+    }),
+    failureLabel: 'Bulk job stopped; reconciliation required',
+    isHistorical: isHistorical('pendingBulkJobs'),
+    activity: activity('pendingBulkJobs'),
+    afterSuccess: (job, _result, activity) => {
+      void options.loadContext();
+      continueBusinessRequest('pendingBulkJobs', job.id, activity);
+    }
+  });
+
   return {
     blocked: options.blocked,
+    allowBulkWrites: options.allowBulkWrites !== false,
+    bulkJobApprovals: bulk.states,
+    setBulkJobApprovals: bulk.setStates,
+    approveBulkJob: bulk.approve,
+    rejectBulkJob: (id: string) => {
+      const state = bulk.states[id];
+      if (!state || !canEditApproval(state, isHistorical('pendingBulkJobs')(id))) return;
+      bulk.reject(id);
+      void sendExtensionMessage({ type: 'STOP_BULK_JOB', payload: { id, reject: true } }).catch(
+        () => undefined
+      );
+    },
+    toggleBulkReadableScope: (id: string) =>
+      bulk.setStates((states) => {
+        const state = states[id];
+        if (!state || !canEditApproval(state, isHistorical('pendingBulkJobs')(id))) return states;
+        return {
+          ...states,
+          [id]: { ...state, acknowledgeReadableScope: !state.acknowledgeReadableScope }
+        };
+      }),
+    stopBulkJob: (id: string) => {
+      stopping.current.add(id);
+    },
+    bulkProgress,
     mutationApprovals: mutations.states,
     setMutationApprovals: mutations.setStates,
     listMembershipApprovals: memberships.states,
@@ -245,12 +320,14 @@ export function useApprovals(options: {
     approving: [
       ...Object.values(mutations.states),
       ...Object.values(memberships.states),
-      ...Object.values(skills.states)
+      ...Object.values(skills.states),
+      ...Object.values(bulk.states)
     ].some((state) => state.status === 'approving'),
     registerResponse: (response: LlmResponse) => {
       mutations.register(response.pendingMutations);
       memberships.register(response.pendingListMemberships);
       skills.register(response.pendingSkillChanges);
+      bulk.register(response.pendingBulkJobs);
     },
     approveMutation: mutations.approve,
     rejectMutation: mutations.reject,

@@ -18,6 +18,8 @@ Oddy is a Manifest V3 extension with three execution environments. Keep their bo
 | Browser integration          | `lib/browser/`                                                                      | Active-tab checks, context extraction, native navigation/fallback, refresh, script injection.                                                    |
 | Dataverse contracts          | `lib/dataverse/contracts.ts`                                                        | Requests, query/filter types, resolved metadata, and primitive results.                                                                          |
 | Dataverse execution          | `lib/dataverse-primitives.ts`                                                       | Self-contained page executor. Metadata validation, reads, previews, and approved writes. Re-exports existing contract imports for compatibility. |
+| Bulk execution/workspace     | `lib/bulk/`, `lib/browser/bulk.ts`                                                  | Typed plans, local datasets/rows, paged preparation, counts, checkpointed runner, signed-session batch transport, recovery.                      |
+| Bulk UI                      | `entrypoints/sidepanel/BulkJobCards.tsx`, `BulkWorkspace.tsx`                       | Frozen-scope approval, permission acknowledgement, paginated inspection, progress, upload, and recovery.                                         |
 | Shared application contracts | `lib/types.ts`                                                                      | Extension messages, settings, model responses, proposal/result types.                                                                            |
 | Conversation model           | `lib/conversation-model.ts`                                                         | Shared transcript/approval types, authoritative audit serialization, read-only restoration. No React or IndexedDB dependency.                    |
 | History repository           | `lib/conversations.ts`                                                              | IndexedDB connection/transaction handling and CRUD. Existing store name, version, and data shape are unchanged.                                  |
@@ -48,6 +50,58 @@ background execution message → environment/metadata revalidation → write
 - The side panel disables conversation switching and new submissions during approval execution so outcomes stay with their originating conversation.
 - These checks protect the supported extension flow; they are not a substitute for server-side authorization. Dataverse permissions still apply.
 
+## Bulk jobs: data plane versus model context
+
+`lib/bulk/plan.ts` parses complete typed plans strictly: malformed/unsupported filters, values, mappings, and extra properties fail rather than being dropped. An empty filter requires `allRecords: true`. There are four operations:
+
+- `update`: select target records and apply constant, metadata-validated scalar/Choice/lookup values.
+- `count_related`: select targets, resolve an explicit source lookup referencing that target table, page source records, and count distinct source IDs by typed parent lookup. Missing counts are zero. Polymorphic lookup types must be returned; ambiguous/missing types fail closed. The destination must be a writable whole-number field.
+- `create`: map a locally uploaded scalar CSV/JSON dataset into validated fields and reserve each record GUID before execution.
+- `membership`: select all matching members for an existing, static, type-compatible marketing list; enumerate existing memberships and exclude them.
+
+```text
+model: typed plan → prepare_bulk_job → job metadata/counts, no row samples
+                              ↓
+worker: validate / page / derive → separate IndexedDB manifest + frozen rows
+                                                ↓ explicit approval
+live side-panel loop → approve nonce → private execution token → next chunk
+                                                ↓
+worker: revalidate identity/environment/metadata → commit in-flight marker
+                                                ↓
+page: conditional PATCH / reserved-ID POST in $batch, or AddListMembersList
+                                                ↓
+worker: atomically commit outcomes + next index → compact UI progress
+                                                ↓
+completed job only → authoritative count audit → guarded model continuation
+```
+
+`lib/bulk/repository.ts` uses **oddy-bulk-workspace**, separate from optional chat history. Job manifests, indexed row records, and uploaded datasets are independent stores. A checkpoint commits row outcomes and manifest progress in one transaction. Dataset listing returns metadata only. The assistant loop explicitly strips the job's five-row UI sample from model-facing JSON; full arrays, before-images, ETags, identity IDs, and execution tokens never enter model outputs or transcript audits. Inspection of 25 local rows is a UI-only extension message, not a model tool. Compact five-row previews may be retained by the user's normal chat-history policy.
+
+`lib/bulk/engine.ts` handles preparation, approval, chunks, and reconciliation. `bulk_fields`, `bulk_page`, `bulk_read_versions`, `bulk_list_info`, and `bulk_identity` are internal page primitives, not advertised model tools. Metadata caches last only one injection, amortizing repeated field validation without carrying stale metadata across approvals. FetchXML pages use a primary-key order and real paging cookies, never `top 50` or a capped total count. Unknown filters, failed pages, no-progress cookies, unreadable versions, missing lookup types, over-limit scans, and time-budget failures never produce an executable partial selection. Enumeration is not snapshot isolation across records, and row-level read permissions may make counts incomplete.
+
+The model sees only `prepare_bulk_job`, `prepare_bulk_job_remaining`, `get_bulk_job`, and `list_bulk_datasets`. The old small explicit-ID membership proposal remains supported. The bundled membership workflow now prepares a query-backed job rather than enumerating at most 50 members.
+
+### Approval and execution invariants
+
+- Frozen row payloads are immutable after preparation. Approval resolves a locally stored ID/revision, not a client-supplied member/payload array.
+- Approval binds the environment, signed-in user, stored plan/rows, nonce, and one-hour expiry. Related-count approval additionally requires acknowledging that the execution identity sees only readable source records.
+- Execution requires a private token returned only to the live approval callback. Tokens are not model-visible, included in conversation history, or reconstructed by inspection.
+- A worker lock prevents concurrent calls for the same job; `expectedOffset` rejects a replayed chunk even after its original call finishes.
+- The runner saves an in-flight marker **before** handing any chunk to a mutating transport. A lost response or failed outcome commit leaves recovery evidence and cannot authorize a replay.
+- `lib/bulk/transport.ts` is a separate, self-contained MAIN-world function. Updates use exact captured ETags in independent change sets. Creates use reserved GUIDs, never implicit upserts. Each chunk contains at most 50 operations and a conservative estimated 1 MiB payload budget.
+- The transport rechecks WhoAmI immediately before POST, parses multipart responses by Content-ID, and distinguishes confirmed successes, conflicts, failures, and uncertainty. An outer HTTP 200 or asynchronous acceptance does not prove writes completed. Missing/duplicate results and lost responses stay uncertain.
+- Membership chunks use the tenant-advertised action signature and revalidate list/type/records/membership/identity. Already-added members may be skipped under the explicitly disclosed bulk-job policy; ordinary small-ID proposals retain their stricter stale-preview behavior.
+- A failed/conflicting/uncertain chunk stops later chunks and invalidates its token. `Retry-After` is reported; remaining-work preparation respects the recorded cooldown. There is no silent failed-write retry, global rollback, or success claim for partial completion.
+- Stop runs after the current chunk settles. Closing the panel stops the live loop; active-tab/session loss blocks further writes. Checkpoints support recovery, not unattended execution or history replay.
+
+### Remaining-work previews
+
+A fresh remaining-work preview invalidates the old token, treats an abandoned in-flight chunk as uncertain, excludes confirmed successes, and reconciles current state before offering another approval. For updates, already-matching values are skipped and new ETags/before-images are captured. For creates, the original reserved IDs are retained: existing matching records are skipped, differing existing records block the preview, and nothing is overwritten or silently upserted. Membership recovery excludes existing members. Original derived-count values are retained and labeled with their original preparation time; a new count job is needed to recalculate them.
+
+The initial browser runner caps target/dataset rows at 100,000, source/membership scans at 1,000,000, and preparation at two minutes. The workspace guard permits 20 jobs and five datasets; datasets are limited to 25 MiB and scalar cells. Full workspace data has a 24-hour cleanup policy enforced on use (not a guaranteed deletion timer while Chrome is closed). Individual job/dataset deletion can free a workspace slot without erasing a different job's recovery evidence; job deletion is owner/environment checked and locked against an active chunk. Clearing data removes recovery evidence, not Dataverse changes. Expired unknown writes must never be assumed to have failed.
+
+Native `CreateMultiple`/`UpdateMultiple` optimization and a separately authenticated server runner are future adapters. The initial CRUD transport uses `$batch`; do not describe it as native bulk-message execution or bypass row-version checks for speed. No codemode or model-generated script execution is introduced.
+
 ## Adding a Dataverse capability
 
 1. Add proposal/result contracts to `lib/types.ts` if the operation needs approval. Add the primitive request/result shape in `lib/dataverse/contracts.ts`.
@@ -64,7 +118,7 @@ background execution message → environment/metadata revalidation → write
 
 `lib/approval-continuation.ts` keeps automatic follow-up separate from mutation execution. Each live user request and assistant response carries optional request context: original prompt, request lineage, environment, consent flags, and any skill tool ceiling. Older saved conversations remain readable without it.
 
-After a successful record or membership approval, `useApprovals.ts` appends the actual execution result (including IDs) to the audit and queues a transient continuation event. The side panel waits for context refresh and outstanding sibling approvals, then sends one internal follow-up using that original scope. It does not append a synthetic user message. The next assistant response may prepare the next proposal, but never executes it.
+After a successful record/membership approval or a fully completed bulk job, `useApprovals.ts` appends the actual execution result (including IDs) to the audit and queues a transient continuation event. The side panel waits for context refresh and outstanding sibling approvals, then sends one internal follow-up using that original scope. It does not append a synthetic user message. The next assistant response may prepare the next proposal, but never executes it.
 
 - A per-conversation/proposal guard prevents duplicate continuations, including React StrictMode effect replay.
 - A newer user request, restored history, changed environment, revoked consent, or failed/rejected sibling stops automatic continuation.
@@ -73,7 +127,13 @@ After a successful record or membership approval, `useApprovals.ts` appends the 
 - Follow-up provider failures leave the successful approval marked Applied; they do not retry the saved operation.
 - Events are not persisted and are not replayed when history is opened. Legacy conversations require an explicit follow-up request.
 
-`lib/assistant/runtime-clock.ts` supplies authoritative worker time, local date/time zone, and a computed rolling 30-day UTC range on each request. The model can use `createdon ge` and `createdon le` with those timestamps rather than guessing today or doing calendar arithmetic. Calendar-day requests remain distinct from rolling-duration requests.
+`lib/dataverse-user-context.ts` is a self-contained, read-only MAIN-world collector. It gets the signed-in user ID from `Xrm.Utility.getGlobalContext().userSettings` or `WhoAmI`, reads that user's `usersettingscollection` time-zone code, and looks up the current `timezonedefinitions` name. `LocalTimeFromUtcTime` converts the request UTC instant using Dataverse's time-zone/DST rules. This works on list pages and does not depend on `Xrm.Page` form fields. The user ID is used internally and is not returned to the model; names and security roles are not read.
+
+`lib/browser/context.ts` collects these settings alongside form context and preserves them through the record Web API fallback. Custom-skill-only requests skip this additional Dataverse read. `lib/assistant/runtime-clock.ts` receives the resulting `currentUser` settings **after** context collection, separately from `browserLocalDate`/`browserTimeZone`, and includes them in the authoritative request clock. A read audit makes the source visible in the side panel.
+
+The UTC interval and user-local date share the collector's observation instant. The model can use `createdon ge` and `createdon le` with the computed rolling 30-day timestamps rather than guessing today or doing calendar arithmetic. A rolling duration is time-zone-independent; calendar-day requests remain distinct. Windows time-zone names are not guessed into IANA identifiers. If Web API settings/conversion are denied, the current `getTimeZoneOffsetMinutes()` value can supply an explicitly labeled fallback only for the observed instant; no historical/future DST rule is inferred. If neither source is available, warnings are supplied instead of silently using the browser zone.
+
+Reference APIs: [current-user Client API settings](https://learn.microsoft.com/en-us/power-apps/developer/model-driven-apps/clientapi/reference/xrm-utility/getglobalcontext/usersettings), [UserSettings table](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/reference/entities/usersettings), [time-zone definitions](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/reference/entities/timezonedefinition), and [LocalTimeFromUtcTime](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/localtimefromutctime?view=dataverse-latest).
 
 ## Why the injected executor is intentionally self-contained
 
@@ -102,7 +162,15 @@ Tests are divided by boundary:
 - `approval-cards.test.tsx`: server-rendered live, historical, and failed cards without browser dependencies.
 - `approval-continuation.test.ts`: continuation scope, original intent/result IDs, consent, sibling approvals, and deduplication.
 - `approval-continuation-ui.test.tsx`: the real side panel under React StrictMode in Happy DOM; verifies create → continue → membership preview → fresh approval, plus failure handling.
-- `runtime-clock.test.ts`: exact rolling intervals across year boundaries and leap years.
+- `bulk-engine.test.ts`: thousands-row paging/frozen selections, related counts/zeroes, version conflicts, identity/expiry, private-token checkpoints, uncertain-create reconciliation, interrupted commits, membership jobs, cooldown, and retention.
+- `bulk-primitives.test.ts`: cached metadata validation, strict full paging, lookup types, concurrency support, and serialization.
+- `bulk-transport.test.ts`: conditional batch formatting, reserved create IDs, multipart Content-ID results, asynchronous/uncertain responses, identity/origin checks, and throttling without replay.
+- `bulk-client.test.ts`: live approval-owned chunk loop, consent/stop handling, failure interruption, compact audits, and no model execution authority.
+- `bulk-plan.test.ts`: strict non-broadening plan parsing and safe scalar JSON/quoted CSV input.
+- `bulk-ui.test.tsx`: real side panel plus job engine under StrictMode, local inspection, explicit approval, count-scope acknowledgement, compact continuation, and separate remaining-work approval.
+- `runtime-clock.test.ts`: exact rolling intervals across year boundaries/leap years and distinct browser/Dataverse user clocks.
+- `dataverse-user-context.test.ts`: signed-in settings, WhoAmI fallback, server conversion/DST authority, date boundaries, permissions, current-offset fallback, and injection serialization.
+- `browser.test.ts` also verifies that user settings survive form-field early returns, list-page context, and record Web API fallback.
 - `conversation-model.test.ts`: backward-compatible restoration and authoritative outcome serialization.
 - `conversations.test.ts`: real IndexedDB API semantics via `fake-indexeddb`, atomic save/retention, CRUD, and policy decisions.
 - `browser.test.ts`: origin checks, injection contract, serialization safety, and navigation matching.
@@ -114,11 +182,15 @@ No test needs live credentials or a Dataverse tenant. That also means tests do *
 1. Load `.output/chrome-mv3`, open a Dataverse app, and verify context detection.
 2. Query records, create/update `AI Result`, and navigate to a record.
 3. Prepare a record change; deselect/reselect fields; reject it. Prepare another and approve it.
-4. Ask to create a static marketing list and add contacts created in the last 30 days. Approve creation; Oddy should automatically use the saved list ID and prepare the matching members. Approve membership separately and verify one `AddListMembersList` request. Check dynamic-list rejection.
+4. Ask to create a static marketing list and add contacts created in the last 30 days. Approve creation; Oddy should automatically use the saved list ID and prepare the matching members. Approve membership separately and verify bounded `AddListMembersList` chunks for the frozen matching selection, never per-contact writes. Check dynamic-list rejection.
 5. Trigger an execution failure and confirm the next assistant turn receives the exact audit error and requires a fresh preview.
 6. Enable local history; resume a conversation. Old cards must have no approval buttons; new requests must still work. Delete a conversation and clear all.
 7. Verify a custom-skill change still requires approval and bundled skills remain immutable.
+8. In a test environment, prepare an update over thousands of contacts using a dedicated test field. Inspect multiple local pages, reject once, then prepare again. Change a selected row externally before approval and verify a conflict stops later chunks with accurate partial counts.
+9. Prepare contact case counts using the explicitly selected Customer or Primary Contact relationship. Verify active/all-case filtering, typed contact-versus-account lookups, zero-case contacts, the permission-scope acknowledgement, and independent manual counts.
+10. Upload a small CSV/JSON dataset, inspect mappings, approve creates, and verify reserved GUIDs. Simulate a lost chunk response or panel close; prepare remaining work and verify no successful record is recreated. Start small before scaling to thousands.
+11. Close/reopen the panel during a bulk job; no writes may restart automatically. Use Bulk workspace to inspect progress and explicitly prepare/approve remaining work. Verify history restoration and workspace clearing cannot trigger writes.
 
 ## Scope of this refactor
 
-The module split preserves the existing Dataverse API behavior and persisted history format. It does not introduce arbitrary action execution, change consent defaults, or change the eight-turn outbound history limit. The large injected executor remains deliberate; settings/editor UI and richer history lifecycle extraction can be tackled independently next.
+The original module split preserves existing histories and primitive behavior. Version 0.11 adds typed bulk-job preparation, a separate temporary workspace, optional bulk history fields, and approval-gated chunk execution; it does not introduce arbitrary actions, codemode, broader skill allowlists, changed consent defaults, or a larger outbound history window. Native bulk-message optimization and unattended server execution remain separate future capabilities.

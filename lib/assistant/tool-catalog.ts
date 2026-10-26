@@ -1,4 +1,5 @@
 import type { AzureToolDefinition } from '../azure-openai';
+import { bulkToolDefinitions } from '../bulk/tool-catalog';
 import type { OddySkillToolName } from '../types';
 
 export const SKILL_TOOL_OPTIONS: Array<{
@@ -40,6 +41,27 @@ export const SKILL_TOOL_OPTIONS: Array<{
     name: 'prepare_marketing_list_membership',
     label: 'Prepare marketing-list members',
     description: 'Prepare one bulk AddListMembersList proposal that requires approval.'
+  },
+  {
+    name: 'prepare_bulk_job',
+    label: 'Prepare bulk job',
+    description:
+      'Prepare query-backed updates, related counts, creates, or membership jobs; approval required.'
+  },
+  {
+    name: 'prepare_bulk_job_remaining',
+    label: 'Prepare remaining bulk work',
+    description: 'Reconcile stopped work into a fresh approval preview.'
+  },
+  {
+    name: 'get_bulk_job',
+    label: 'Read bulk job status',
+    description: 'Read compact counts and outcomes, never execute.'
+  },
+  {
+    name: 'list_bulk_datasets',
+    label: 'List local datasets',
+    description: 'Read uploaded dataset handles and columns, not rows.'
   },
   {
     name: 'navigate_dataverse',
@@ -301,6 +323,7 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
       }
     }
   },
+  ...bulkToolDefinitions(FILTER_SCHEMA),
   {
     type: 'function',
     function: {

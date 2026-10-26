@@ -42,11 +42,9 @@ describe('Oddy skills', () => {
     });
     expect(BUILT_IN_SKILLS[1]).toMatchObject({
       id: 'add-marketing-list-members',
-      allowedTools: ['query_dataverse_records', 'prepare_marketing_list_membership']
+      allowedTools: ['query_dataverse_records', 'prepare_bulk_job']
     });
-    expect(BUILT_IN_SKILLS[1]?.instructions).toContain(
-      'one supported Dataverse AddListMembersList action'
-    );
+    expect(BUILT_IN_SKILLS[1]?.instructions).toContain('bounded AddListMembersList requests');
   });
 
   it('validates inputs before building skill execution instructions', () => {

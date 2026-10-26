@@ -1,6 +1,15 @@
 import type { DataversePrimitiveResult } from '../dataverse-primitives';
 import type { NavigationResult } from '../browser/navigation';
 import type { OddySkill, PreparedOddySkillChange } from '../types';
+import type { BulkJobSummary, BulkDatasetSummary } from '../bulk/contracts';
+
+export interface BulkToolResult {
+  ok: boolean;
+  action: 'prepare_bulk_job' | 'prepare_bulk_job_remaining' | 'get_bulk_job' | 'list_bulk_datasets';
+  job?: BulkJobSummary;
+  datasets?: BulkDatasetSummary[];
+  error?: string;
+}
 
 export interface OddySkillToolResult {
   ok: boolean;
@@ -12,4 +21,5 @@ export interface OddySkillToolResult {
   error?: string;
 }
 
-export type AssistantToolResult = DataversePrimitiveResult | NavigationResult | OddySkillToolResult;
+export type AssistantToolResult =
+  DataversePrimitiveResult | NavigationResult | OddySkillToolResult | BulkToolResult;

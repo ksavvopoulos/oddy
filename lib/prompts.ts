@@ -20,6 +20,7 @@ export function contextAsText(context: DataverseContext, fields: DataverseField[
     recordId: context.recordId,
     recordName: context.recordName,
     formName: context.formName,
+    currentUser: context.currentUser,
     fields: fields.map((field) => ({
       logicalName: field.logicalName,
       label: field.label,

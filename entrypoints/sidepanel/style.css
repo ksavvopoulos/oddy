@@ -220,6 +220,19 @@ textarea:focus { border-color: #7165df; box-shadow: 0 0 0 3px rgba(113, 101, 223
 .composer-footer button:disabled { cursor: not-allowed; opacity: .45; }
 .privacy-footer { margin: 13px 16px 0; color: #9298aa; text-align: center; font-size: 9px; }
 
+.bulk-workspace { margin: 10px 16px; padding: 10px; border: 1px solid #e4e6ee; border-radius: 9px; background: #fafbfe; color: #525b75; font-size: 11px; overflow-wrap: anywhere; }
+.bulk-workspace summary, .bulk-job-card summary { cursor: pointer; font-weight: 700; }
+.bulk-workspace p, .bulk-job-card p { line-height: 1.5; }
+.bulk-workspace label, .bulk-workspace-item { display: grid; gap: 5px; margin: 8px 0; }
+.bulk-workspace input[type=file] { max-width: 100%; font-size: 10px; }
+.bulk-workspace button, .bulk-job-card > button, .bulk-row-inspection button { margin: 5px 5px 5px 0; padding: 6px 8px; border: 1px solid #d7daea; border-radius: 6px; background: white; color: #5145bb; font-size: 10px; }
+.bulk-workspace button:disabled, .bulk-job-card button:disabled { opacity: .5; cursor: not-allowed; }
+.bulk-workspace-item { padding: 7px 0; border-bottom: 1px solid #e4e6ee; overflow-wrap: anywhere; white-space: pre-wrap; }
+.bulk-workspace-item code { font-size: 9px; }
+.bulk-row-inspection { max-height: 350px; overflow: auto; }
+.bulk-job-card details { margin: 8px 0; }
+.bulk-job-card pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 10px; }
+
 @media (max-width: 330px) {
   .composer-footer span { display: none; }
   .composer-footer { justify-content: flex-end; }

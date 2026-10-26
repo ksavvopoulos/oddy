@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { bulkSummary } from './fixtures/bulk';
 import {
   approvalContinuationPrompt,
   createApprovalContinuation,
@@ -110,6 +111,34 @@ describe('post-approval continuation', () => {
       expect(decideApprovalContinuation(event, changed).action).toBe('skip');
     }
   );
+
+  it('waits for bulk siblings and resumes only a confirmed completed bulk approval', () => {
+    const { event, state } = fixture();
+    const job = bulkSummary();
+    state.transcript[1]!.pendingBulkJobs = [job];
+    const pending = { ...state, bulkJobApprovals: { [job.id]: { status: 'pending' as const } } };
+    expect(decideApprovalContinuation(event, pending).action).toBe('wait');
+    const source = createApprovalContinuation(
+      state.conversationId,
+      state.transcript,
+      'pendingBulkJobs',
+      job.id,
+      { name: 'execute_bulk_job', label: 'Completed approved bulk job', summary: '1200 succeeded' }
+    )!;
+    expect(decideApprovalContinuation(source, pending).action).toBe('skip');
+    expect(
+      decideApprovalContinuation(source, {
+        ...pending,
+        bulkJobApprovals: { [job.id]: { status: 'approved' } }
+      }).action
+    ).toBe('resume');
+    expect(
+      decideApprovalContinuation(event, {
+        ...pending,
+        bulkJobApprovals: { [job.id]: { status: 'error' } }
+      }).action
+    ).toBe('skip');
+  });
 
   it('waits for sibling approvals rather than applying them implicitly', () => {
     const { event, state } = fixture();

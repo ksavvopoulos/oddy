@@ -12,6 +12,14 @@ import { conversationFixture } from './fixtures/proposals';
 function approvalActions(): ApprovalActions {
   const conversation = conversationFixture();
   return {
+    bulkJobApprovals: {},
+    setBulkJobApprovals: vi.fn(),
+    approveBulkJob: vi.fn(),
+    rejectBulkJob: vi.fn(),
+    stopBulkJob: vi.fn(),
+    toggleBulkReadableScope: vi.fn(),
+    bulkProgress: {},
+    allowBulkWrites: true,
     mutationApprovals: conversation.mutationApprovals,
     listMembershipApprovals: conversation.listMembershipApprovals,
     skillChangeApprovals: conversation.skillChangeApprovals,

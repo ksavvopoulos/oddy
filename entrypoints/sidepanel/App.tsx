@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { version } from '../../package.json';
 import { TranscriptMessage } from './TranscriptMessage';
+import { BulkWorkspace } from './BulkWorkspace';
+import type { BulkJobSummary } from '../../lib/bulk/contracts';
 import {
   clearConversations,
   deleteConversation,
@@ -98,6 +101,7 @@ export function App() {
     setMutationApprovals({});
     setListMembershipApprovals({});
     setSkillChangeApprovals({});
+    setBulkJobApprovals({});
     setQuestion('');
     setActiveSkill(undefined);
     setSkillInputValues({});
@@ -118,6 +122,7 @@ export function App() {
       setMutationApprovals(restored.mutationApprovals);
       setListMembershipApprovals(restored.listMembershipApprovals);
       setSkillChangeApprovals(restored.skillChangeApprovals);
+      setBulkJobApprovals(restored.bulkJobApprovals || {});
       setConversationId(stored.id);
       setConversationCreatedAt(stored.createdAt);
       setQuestion('');
@@ -157,6 +162,7 @@ export function App() {
     loadContext,
     loadSkills,
     blocked: sending || historyLoading,
+    allowBulkWrites: includeContext,
     onBusinessApproved: setPendingContinuation
   });
   const {
@@ -166,6 +172,8 @@ export function App() {
     setListMembershipApprovals,
     skillChangeApprovals,
     setSkillChangeApprovals,
+    bulkJobApprovals,
+    setBulkJobApprovals,
     registerResponse,
     approving
   } = approvals;
@@ -214,7 +222,8 @@ export function App() {
         transcript,
         mutationApprovals,
         listMembershipApprovals,
-        skillChangeApprovals
+        skillChangeApprovals,
+        bulkJobApprovals
       };
       void saveConversation(conversation, {
         maxConversations: settings.conversationHistory.maxConversations,
@@ -242,6 +251,7 @@ export function App() {
     mutationApprovals,
     settings,
     skillChangeApprovals,
+    bulkJobApprovals,
     transcript
   ]);
 
@@ -345,6 +355,7 @@ export function App() {
           pendingMutations: result.data!.pendingMutations,
           pendingListMemberships: result.data!.pendingListMemberships,
           pendingSkillChanges: result.data!.pendingSkillChanges,
+          pendingBulkJobs: result.data!.pendingBulkJobs,
           requestContext
         }
       ]);
@@ -375,7 +386,8 @@ export function App() {
       allowSkillTools: allowSkillManagement,
       mutationApprovals,
       listMembershipApprovals,
-      skillChangeApprovals
+      skillChangeApprovals,
+      bulkJobApprovals
     });
     if (decision.action === 'wait') return;
     setPendingContinuation(undefined);
@@ -395,6 +407,7 @@ export function App() {
     mutationApprovals,
     listMembershipApprovals,
     skillChangeApprovals,
+    bulkJobApprovals,
     claimContinuation,
     sendPrompt
   ]);
@@ -631,6 +644,19 @@ export function App() {
             {context.tableLogicalName && <span>{context.tableLogicalName}</span>}
             {context.formName && <span>{context.formName}</span>}
             {context.environmentName && <span>{context.environmentName}</span>}
+            {context.currentUser?.localDate && (
+              <span
+                title={
+                  context.currentUser.timeZoneDisplayName ||
+                  context.currentUser.timeZoneStandardName ||
+                  'Current Dataverse user time'
+                }
+              >
+                User date: {context.currentUser.localDate}
+                {context.currentUser.timeZoneStandardName &&
+                  ` · ${context.currentUser.timeZoneStandardName}`}
+              </span>
+            )}
             <span>
               {context.source === 'webApi'
                 ? 'Dataverse Web API'
@@ -643,6 +669,25 @@ export function App() {
 
         {context?.warning && <p className="context-warning">{context.warning}</p>}
       </section>
+
+      <BulkWorkspace
+        busy={busy || historyLoading}
+        enabled={includeContext && Boolean(context?.isDataverse)}
+        onPreview={(job: BulkJobSummary) => {
+          const response: LlmResponse = {
+            content:
+              job.status === 'pending'
+                ? `Prepared a fresh remaining-work preview for ${job.total} rows. Review the frozen scope and approve separately. Previously completed rows are excluded.`
+                : 'Reconciliation found no remaining changes to apply.',
+            pendingBulkJobs: job.status === 'pending' ? [job] : undefined
+          };
+          registerResponse(response);
+          setTranscript((items) => [
+            ...items,
+            { id: crypto.randomUUID(), role: 'assistant', ...response }
+          ]);
+        }}
+      />
 
       <section className="skill-section">
         <div className="skill-section-heading">
@@ -803,7 +848,9 @@ export function App() {
           <small className="tool-consent">
             Dataverse primitives may run queries, manage the AI Result personal view, prepare record
             changes for your approval, and navigate the active tab. Business-record writes only run
-            after you approve the preview.
+            after you approve the preview. Bulk jobs temporarily store full selected rows locally
+            for checkpointing; row previews stay local and only compact job metadata/counts go to
+            the model.
           </small>
         )}
 
@@ -857,7 +904,7 @@ export function App() {
       </form>
 
       <footer className="privacy-footer">
-        Review the data preview before sending record information.
+        Oddy {version} · Review the data preview before sending record information.
         {settings?.conversationHistory.enabled &&
           ' Conversation history is saved locally in this Chrome profile.'}
       </footer>

@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm';
 import type { StoredTranscriptItem } from '../../lib/conversation-model';
 import { RecordChangeCards, ListMembershipCards, SkillChangeCards } from './ApprovalCards';
 import { normalizeMarkdown } from './formatting';
+import { BulkJobCards } from './BulkJobCards';
 import type { ApprovalActions } from './useApprovals';
 
 export function TranscriptMessage({
@@ -44,6 +45,7 @@ export function TranscriptMessage({
             <RecordChangeCards item={item} approvals={approvals} />
             <ListMembershipCards item={item} approvals={approvals} />
             <SkillChangeCards item={item} approvals={approvals} />
+            <BulkJobCards item={item} approvals={approvals} />
           </>
         ) : (
           item.content

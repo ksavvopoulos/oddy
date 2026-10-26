@@ -1,3 +1,5 @@
+import type { BulkDatasetRecord, BulkJobSummary } from './bulk/contracts';
+
 export interface AzureOpenAISettings {
   endpoint: string;
   deployment: string;
@@ -39,6 +41,22 @@ export interface DataverseField {
 
 export type DataverseContextSource = 'url' | 'xrm' | 'webApi';
 
+export interface DataverseUserContext {
+  source: 'webApi' | 'xrm' | 'unavailable';
+  observedAtUtc: string;
+  timeZoneCode?: number;
+  timeZoneStandardName?: string;
+  timeZoneDisplayName?: string;
+  /** Minutes east of UTC at observedAtUtc; not a historical/future DST rule. */
+  utcOffsetMinutes?: number;
+  /** User-local wall time without a misleading UTC suffix. */
+  localDateTime?: string;
+  localDate?: string;
+  languageId?: number;
+  dateFormat?: string;
+  warning?: string;
+}
+
 export interface DataverseContext {
   isDataverse: boolean;
   source: DataverseContextSource;
@@ -54,6 +72,7 @@ export interface DataverseContext {
   url?: string;
   fields: DataverseField[];
   capturedAt: string;
+  currentUser?: DataverseUserContext;
   warning?: string;
 }
 
@@ -174,6 +193,10 @@ export type OddySkillToolName =
   | 'execute_dataverse_view'
   | 'prepare_dataverse_record_change'
   | 'prepare_marketing_list_membership'
+  | 'prepare_bulk_job'
+  | 'prepare_bulk_job_remaining'
+  | 'get_bulk_job'
+  | 'list_bulk_datasets'
   | 'navigate_dataverse';
 
 export interface OddySkillInput {
@@ -254,9 +277,28 @@ export interface LlmResponse {
   pendingMutations?: PreparedDataverseMutation[];
   pendingListMemberships?: PreparedMarketingListMembership[];
   pendingSkillChanges?: PreparedOddySkillChange[];
+  pendingBulkJobs?: BulkJobSummary[];
 }
 
 export type ExtensionMessage =
+  | { type: 'STAGE_BULK_DATASET'; payload: { name: string; records: BulkDatasetRecord[] } }
+  | { type: 'DELETE_BULK_DATASET'; payload: { id: string } }
+  | { type: 'DELETE_BULK_JOB'; payload: { id: string } }
+  | { type: 'LIST_BULK_DATASETS' }
+  | { type: 'LIST_BULK_JOBS' }
+  | { type: 'CLEAR_BULK_WORKSPACE' }
+  | { type: 'GET_BULK_JOB'; payload: { id: string } }
+  | { type: 'GET_BULK_JOB_ROWS'; payload: { id: string; offset: number } }
+  | { type: 'PREPARE_BULK_JOB_REMAINDER'; payload: { id: string } }
+  | {
+      type: 'APPROVE_BULK_JOB';
+      payload: { id: string; revision: string; acknowledgeReadableScope?: boolean };
+    }
+  | {
+      type: 'EXECUTE_BULK_JOB_CHUNK';
+      payload: { id: string; runToken: string; expectedOffset: number };
+    }
+  | { type: 'STOP_BULK_JOB'; payload: { id: string; reject?: boolean } }
   | { type: 'GET_ACTIVE_CONTEXT' }
   | { type: 'CONTEXT_CHANGED' }
   | { type: 'NAVIGATION_STATUS'; payload: NavigationProgress }

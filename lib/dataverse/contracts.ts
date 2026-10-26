@@ -1,5 +1,8 @@
+import type { BulkPage, BulkPageCursor } from '../bulk/contracts';
 import type {
   DataverseMutationExecutionResult,
+  DataverseMutationValueInput,
+  PreparedDataverseMutationField,
   DataverseMutationInput,
   MarketingListMemberInput,
   MarketingListMembershipExecutionResult,
@@ -44,6 +47,24 @@ export interface DataverseQuerySpec {
 }
 
 export type DataversePrimitiveRequest =
+  | { action: 'bulk_identity'; origin: string }
+  | {
+      action: 'bulk_fields';
+      origin: string;
+      operation: 'create' | 'update';
+      table: string;
+      values: DataverseMutationValueInput[][];
+    }
+  | { action: 'bulk_page'; origin: string; query: DataverseQuerySpec; cursor?: BulkPageCursor }
+  | {
+      action: 'bulk_read_versions';
+      origin: string;
+      table: string;
+      ids: string[];
+      columns: string[];
+      requireConcurrency?: boolean;
+    }
+  | { action: 'bulk_list_info'; origin: string; table: string; listId: string }
   | {
       action: 'resolve_schema';
       origin: string;
@@ -98,6 +119,7 @@ export type DataversePrimitiveRequest =
   | {
       action: 'execute_list_membership';
       origin: string;
+      expectedUserId?: string;
       membership: PreparedMarketingListMembership;
       selectedMemberIds: string[];
     };
@@ -110,6 +132,7 @@ export interface ResolvedDataverseEntity {
   objectTypeCode?: number;
   displayName?: string;
   displayCollectionName?: string;
+  optimisticConcurrencyEnabled?: boolean;
 }
 
 export interface ResolvedDataverseColumn {
@@ -140,6 +163,10 @@ export interface DataversePrimitiveResult {
   fetchXml?: string;
   layoutXml?: string;
   records?: Array<Record<string, unknown>>;
+  userId?: string;
+  bulkFields?: PreparedDataverseMutationField[][];
+  bulkPage?: BulkPage;
+  bulkList?: PreparedMarketingListMembership;
   totalCount?: number;
   relationships?: DataverseRelationship[];
   view?: {

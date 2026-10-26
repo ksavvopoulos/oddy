@@ -1,3 +1,4 @@
+import type { BulkJobSummary } from './bulk/contracts';
 import type {
   DataverseMutationExecutionResult,
   MarketingListMembershipExecutionResult,
@@ -36,6 +37,7 @@ export interface StoredTranscriptItem {
   pendingMutations?: PreparedDataverseMutation[];
   pendingListMemberships?: PreparedMarketingListMembership[];
   pendingSkillChanges?: PreparedOddySkillChange[];
+  pendingBulkJobs?: BulkJobSummary[];
   historical?: boolean;
   requestContext?: ConversationRequestContext;
 }
@@ -49,6 +51,9 @@ export interface StoredListMembershipApprovalState extends ApprovalState<Marketi
 }
 
 export interface StoredSkillChangeApprovalState extends ApprovalState<OddySkillChangeExecutionResult> {}
+export interface StoredBulkJobApprovalState extends ApprovalState<BulkJobSummary> {
+  acknowledgeReadableScope?: boolean;
+}
 
 export interface StoredConversation {
   id: string;
@@ -62,6 +67,7 @@ export interface StoredConversation {
   mutationApprovals: Record<string, StoredMutationApprovalState>;
   listMembershipApprovals: Record<string, StoredListMembershipApprovalState>;
   skillChangeApprovals: Record<string, StoredSkillChangeApprovalState>;
+  bulkJobApprovals?: Record<string, StoredBulkJobApprovalState>;
 }
 
 export interface ConversationSummary {
@@ -106,12 +112,14 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
   const mutationApprovals = restoreApprovals(stored.mutationApprovals);
   const listMembershipApprovals = restoreApprovals(stored.listMembershipApprovals);
   const skillChangeApprovals = restoreApprovals(stored.skillChangeApprovals);
+  const bulkJobApprovals = restoreApprovals(stored.bulkJobApprovals);
   const isExpired = (status?: ApprovalStatus) => status === undefined || status === 'pending';
   const transcript = stored.transcript.map((item) => {
     const hasExpiredProposal =
       item.pendingMutations?.some((p) => isExpired(mutationApprovals[p.id]?.status)) ||
       item.pendingListMemberships?.some((p) => isExpired(listMembershipApprovals[p.id]?.status)) ||
-      item.pendingSkillChanges?.some((p) => isExpired(skillChangeApprovals[p.id]?.status));
+      item.pendingSkillChanges?.some((p) => isExpired(skillChangeApprovals[p.id]?.status)) ||
+      item.pendingBulkJobs?.some((p) => isExpired(bulkJobApprovals[p.id]?.status));
     const toolsUsed = [...(item.toolsUsed || [])];
     if (
       hasExpiredProposal &&
@@ -130,6 +138,7 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
     transcript,
     mutationApprovals,
     listMembershipApprovals,
-    skillChangeApprovals
+    skillChangeApprovals,
+    bulkJobApprovals
   };
 }

@@ -1,5 +1,8 @@
 import type { DataversePrimitiveRequest } from '../dataverse-primitives';
 import { executePrimitiveInActiveTab } from '../browser/primitives';
+import { activeBulkEngine } from '../browser/bulk';
+import { parseBulkPlan } from '../bulk/plan';
+import { bulkRepository } from '../bulk/repository';
 import { navigateDataverse } from '../browser/navigation';
 import { errorMessage } from '../messages';
 import { getUserSkills, prepareOddySkillChange, skillRevision } from '../skills';
@@ -31,6 +34,33 @@ export async function executeAssistantTool(
     args = parsed as Record<string, unknown>;
   } catch {
     return { ok: false, error: 'The model supplied invalid JSON tool arguments.' };
+  }
+
+  if (toolName === 'list_bulk_datasets') {
+    try {
+      await bulkRepository.prune();
+      return { ok: true, action: 'list_bulk_datasets', datasets: await bulkRepository.datasets() };
+    } catch (error) {
+      return { ok: false, action: 'list_bulk_datasets', error: errorMessage(error) };
+    }
+  }
+  if (
+    toolName === 'prepare_bulk_job' ||
+    toolName === 'prepare_bulk_job_remaining' ||
+    toolName === 'get_bulk_job'
+  ) {
+    try {
+      const engine = activeBulkEngine(context);
+      const job =
+        toolName === 'prepare_bulk_job'
+          ? await engine.prepare(parseBulkPlan(args.plan))
+          : toolName === 'prepare_bulk_job_remaining'
+            ? await engine.remaining(stringValue(args.jobId))
+            : await engine.inspect(stringValue(args.jobId));
+      return { ok: true, action: toolName, job };
+    } catch (error) {
+      return { ok: false, action: toolName, error: errorMessage(error) };
+    }
   }
 
   if (toolName === 'list_oddy_skills') {

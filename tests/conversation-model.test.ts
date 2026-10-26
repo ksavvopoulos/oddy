@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { bulkSummary } from './fixtures/bulk';
 import {
   conversationMessages,
   restoreConversation,
@@ -40,6 +41,20 @@ describe('conversation model', () => {
     const restored = restoreConversation(stored);
     expect(restored.mutationApprovals[recordProposal.id]?.status).toBe('pending');
     expect(restored.transcript[1]?.historical).toBe(true);
+  });
+
+  it('restores interrupted bulk approvals as read-only without embedding job rows or execution authority', () => {
+    const job = bulkSummary();
+    const stored = conversationFixture({ bulkJobApprovals: { [job.id]: { status: 'approving' } } });
+    stored.transcript[1]!.pendingBulkJobs = [job];
+    const restored = restoreConversation(stored);
+    expect(restored.bulkJobApprovals?.[job.id]?.status).toBe('pending');
+    expect(restored.transcript[1]?.historical).toBe(true);
+    expect(
+      restored.transcript[1]?.toolsUsed?.some((tool) => tool.name === 'historical_proposal_expired')
+    ).toBe(true);
+    expect(JSON.stringify(conversationMessages(restored.transcript))).not.toContain('runToken');
+    expect(JSON.stringify(restored)).not.toContain('entitySetName');
   });
 
   it('handles older histories missing approval maps, including the membership map', () => {

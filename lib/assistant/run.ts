@@ -18,6 +18,7 @@ import type {
   PreparedOddySkillChange,
   ToolActivity
 } from '../types';
+import type { BulkJobSummary } from '../bulk/contracts';
 import { selectAssistantTools } from './tool-catalog';
 import type { AssistantToolResult } from './contracts';
 import { executeAssistantTool } from './execute-tool';
@@ -33,12 +34,16 @@ export async function runDataverseAssistant(
   skillExecution?: { skill: OddySkill; run: OddySkillRun },
   limits: { expectedOrigin?: string; skillToolLimit?: OddySkillToolName[] } = {}
 ): Promise<LlmResponse> {
-  inputMessages = withRuntimeClock(inputMessages);
   if (!allowDataverseTools && !allowSkillTools) {
-    return callAzureOpenAI(settings, inputMessages);
+    return callAzureOpenAI(settings, withRuntimeClock(inputMessages));
   }
 
-  const context = await getActiveDataverseContext();
+  const context = await getActiveDataverseContext({ includeUserSettings: allowDataverseTools });
+  inputMessages = withRuntimeClock(
+    inputMessages,
+    new Date(),
+    allowDataverseTools ? context.currentUser : undefined
+  );
   if (limits.expectedOrigin && context.origin !== limits.expectedOrigin) {
     throw new Error(
       'The active Dataverse environment changed. Return to the original environment before continuing.'
@@ -70,7 +75,9 @@ export async function runDataverseAssistant(
       `For an unfiltered list: resolve the table and navigate to its logical name. ` +
       `For a business-record update: query and uniquely identify the record, then prepare a field-level change proposal. ` +
       `For a new business record: prepare a create proposal with all known field values. Choice labels may be passed directly and are resolved to numeric options from Dataverse metadata. For lookup fields, resolve the column targets, query the exact target record, and pass its table and record ID in the lookup value. ` +
-      `For adding accounts, contacts, or leads to a marketing list: query the exact list and every intended member, then prepare one bulk marketing-list membership proposal. Do not use ordinary record creation or claim members were added before approval. ` +
+      `For all matching records, many records, or potentially thousands: use prepare_bulk_job with the complete selection query; never loop 50-row queries or put thousands of IDs into the conversation. Bulk jobs support constant updates, related-record counts, uploaded-dataset creates, and static marketing-list membership. Resolve the exact list first; never recreate an existing list. Explicit small ID selections may use prepare_marketing_list_membership. ` +
+      `For related counts, resolve the source lookup and clarify ambiguous relationships/status scope. Counts include only readable records, include zero, and are a one-off calculation, not ongoing automation. For bulk creates, list_bulk_datasets gives uploaded handles/columns without rows. Do not invent a dataset or generate thousands of rows in a tool call. ` +
+      `Bulk preparation writes no Dataverse data. Bulk row samples stay in the local approval UI, not your tool outputs; report supplied counts and never invent example record names or per-row results. One explicit approval covers frozen rows executed in bounded chunks, not a global transaction. Only a completed job audit establishes success; failed/stopped jobs can be reconciled with prepare_bulk_job_remaining into a NEW preview. Never retry a job blindly or turn creates into upserts. ` +
       `For multi-step requests, stop at each approval boundary. After a successful approval the extension sends an automatic continuation with the original request and exact result IDs; complete only the unfinished steps and never repeat the successful write. ` +
       `Prepared record and marketing-list membership changes require an explicit approval click in the extension; never claim a proposed change was applied. ` +
       `Navigation results report whether the destination loaded or only started; never claim it loaded when navigationState is started. ` +
@@ -103,10 +110,39 @@ export async function runDataverseAssistant(
     throw new Error('The selected Oddy skill has no supported tools enabled.');
   }
 
-  const toolsUsed: ToolActivity[] = [];
+  const userTime = allowDataverseTools ? context.currentUser : undefined;
+  const toolsUsed: ToolActivity[] = userTime
+    ? [
+        {
+          name: 'read_dataverse_user_settings',
+          label:
+            userTime.source === 'unavailable'
+              ? 'Current user time settings unavailable'
+              : 'Read current user time settings',
+          summary:
+            userTime.source === 'unavailable'
+              ? 'Lookup failed; rolling UTC clock remains available'
+              : [
+                  userTime.localDate,
+                  userTime.timeZoneDisplayName ||
+                    userTime.timeZoneStandardName ||
+                    (userTime.timeZoneCode !== undefined
+                      ? `Dataverse time-zone code ${userTime.timeZoneCode}`
+                      : undefined) ||
+                    (userTime.utcOffsetMinutes !== undefined
+                      ? `UTC offset ${userTime.utcOffsetMinutes} minutes`
+                      : undefined)
+                ]
+                  .filter(Boolean)
+                  .join(' · '),
+          details: JSON.stringify(userTime)
+        }
+      ]
+    : [];
   const pendingMutations: PreparedDataverseMutation[] = [];
   const pendingListMemberships: PreparedMarketingListMembership[] = [];
   const pendingSkillChanges: PreparedOddySkillChange[] = [];
+  const pendingBulkJobs: BulkJobSummary[] = [];
   let completion = await callAzureOpenAIResponses(settings, {
     messages: conversation,
     tools: activeTools
@@ -121,7 +157,8 @@ export async function runDataverseAssistant(
         toolsUsed: toolsUsed.length ? toolsUsed : undefined,
         pendingMutations: pendingMutations.length ? pendingMutations : undefined,
         pendingListMemberships: pendingListMemberships.length ? pendingListMemberships : undefined,
-        pendingSkillChanges: pendingSkillChanges.length ? pendingSkillChanges : undefined
+        pendingSkillChanges: pendingSkillChanges.length ? pendingSkillChanges : undefined,
+        pendingBulkJobs: pendingBulkJobs.length ? pendingBulkJobs : undefined
       };
     }
 
@@ -156,10 +193,23 @@ export async function runDataverseAssistant(
         pendingSkillChanges.push(result.change);
       }
       toolsUsed.push(activityForTool(toolCall.name, result));
+      if (
+        result.ok &&
+        'job' in result &&
+        result.job?.status === 'pending' &&
+        (result.action === 'prepare_bulk_job' || result.action === 'prepare_bulk_job_remaining')
+      ) {
+        if (!pendingBulkJobs.some((job) => job.id === result.job!.id))
+          pendingBulkJobs.push(result.job);
+      }
       outputs.push({
         type: 'function_call_output',
         call_id: toolCall.call_id,
-        output: JSON.stringify(result)
+        output: JSON.stringify(
+          result.ok && 'job' in result && result.job
+            ? { ...result, job: { ...result.job, sample: [] } }
+            : result
+        )
       });
     }
 

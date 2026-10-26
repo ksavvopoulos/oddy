@@ -48,6 +48,7 @@ export async function executeDataversePrimitive(
     PrimaryIdAttribute?: string;
     PrimaryNameAttribute?: string;
     ObjectTypeCode?: number;
+    IsOptimisticConcurrencyEnabled?: boolean;
     DisplayName?: { UserLocalizedLabel?: { Label?: string } };
     DisplayCollectionName?: { UserLocalizedLabel?: { Label?: string } };
   };
@@ -148,15 +149,22 @@ export async function executeDataversePrimitive(
     return (await response.json()) as T;
   };
 
+  // Per-injection caches amortize metadata over bulk rows without caching stale metadata across approvals.
+  const entityCache = new Map<string, ResolvedDataverseEntity>();
+  const attributeCache = new Map<string, AttributeMetadata[]>();
+  const choiceCache = new Map<string, Array<{ value: number; label: string }>>();
+  const lookupCache = new Map<string, Map<string, string[]>>();
   const resolveEntity = async (tableName: string): Promise<ResolvedDataverseEntity> => {
     const raw = tableName.trim();
+    const cached = entityCache.get(raw.toLowerCase());
+    if (cached) return cached;
     if (!raw || raw.length > 100) throw new Error('A Dataverse table name is required.');
     const safe = raw.toLowerCase().replace(/\s+/g, '_');
     const candidates = [safe];
     if (safe.endsWith('ies')) candidates.push(`${safe.slice(0, -3)}y`);
     if (safe.endsWith('s')) candidates.push(safe.slice(0, -1));
     const select =
-      'LogicalName,EntitySetName,PrimaryIdAttribute,PrimaryNameAttribute,ObjectTypeCode,DisplayName,DisplayCollectionName';
+      'LogicalName,EntitySetName,PrimaryIdAttribute,PrimaryNameAttribute,ObjectTypeCode,DisplayName,DisplayCollectionName,IsOptimisticConcurrencyEnabled';
 
     let metadata: EntityMetadata | undefined;
     for (const candidate of [...new Set(candidates)]) {
@@ -204,45 +212,60 @@ export async function executeDataversePrimitive(
     if (!metadata?.LogicalName || !metadata.EntitySetName || !metadata.PrimaryIdAttribute) {
       throw new Error(`Could not resolve the Dataverse table “${tableName}”.`);
     }
-    return {
+    const resolved: ResolvedDataverseEntity = {
       logicalName: metadata.LogicalName,
       entitySetName: metadata.EntitySetName,
       primaryIdAttribute: metadata.PrimaryIdAttribute,
       primaryNameAttribute: metadata.PrimaryNameAttribute,
       objectTypeCode: metadata.ObjectTypeCode,
       displayName: metadata.DisplayName?.UserLocalizedLabel?.Label,
-      displayCollectionName: metadata.DisplayCollectionName?.UserLocalizedLabel?.Label
+      displayCollectionName: metadata.DisplayCollectionName?.UserLocalizedLabel?.Label,
+      optimisticConcurrencyEnabled: metadata.IsOptimisticConcurrencyEnabled
     };
+    entityCache.set(raw.toLowerCase(), resolved);
+    entityCache.set(resolved.logicalName, resolved);
+    return resolved;
   };
 
   const getAttributes = async (entity: ResolvedDataverseEntity): Promise<AttributeMetadata[]> => {
+    const cached = attributeCache.get(entity.logicalName);
+    if (cached) return cached;
     const url =
       `${request.origin}/api/data/v9.2/EntityDefinitions(LogicalName='${entity.logicalName}')/Attributes` +
       '?$select=LogicalName,AttributeType,IsValidForRead,IsValidForCreate,IsValidForUpdate,DisplayName';
     const payload = await getJson<{ value?: AttributeMetadata[] }>(url);
-    return (payload.value || []).filter(
+    const attributes = (payload.value || []).filter(
       (attribute) => attribute.LogicalName && attribute.IsValidForRead !== false
     );
+    attributeCache.set(entity.logicalName, attributes);
+    return attributes;
   };
 
   const getLookupTargets = async (
     entity: ResolvedDataverseEntity
   ): Promise<Map<string, string[]>> => {
+    const cached = lookupCache.get(entity.logicalName);
+    if (cached) return cached;
     const url =
       `${request.origin}/api/data/v9.2/EntityDefinitions(LogicalName='${entity.logicalName}')/Attributes/` +
       'Microsoft.Dynamics.CRM.LookupAttributeMetadata?$select=LogicalName,Targets';
     const payload = await getJson<{ value?: LookupAttributeMetadata[] }>(url);
-    return new Map(
+    const targets = new Map(
       (payload.value || [])
         .filter((attribute) => attribute.LogicalName)
         .map((attribute) => [attribute.LogicalName as string, attribute.Targets || []])
     );
+    lookupCache.set(entity.logicalName, targets);
+    return targets;
   };
 
   const getChoiceOptions = async (
     entity: ResolvedDataverseEntity,
     column: ResolvedDataverseColumn
   ): Promise<Array<{ value: number; label: string }>> => {
+    const key = `${entity.logicalName}.${column.logicalName}`;
+    const cached = choiceCache.get(key);
+    if (cached) return cached;
     const metadataType =
       column.attributeType === 'State'
         ? 'StateAttributeMetadata'
@@ -254,7 +277,7 @@ export async function executeDataversePrimitive(
       `Attributes(LogicalName='${column.logicalName}')/Microsoft.Dynamics.CRM.${metadataType}` +
       '?$select=LogicalName&$expand=OptionSet';
     const payload = await getJson<ChoiceAttributeMetadata>(url);
-    return (payload.OptionSet?.Options || [])
+    const options = (payload.OptionSet?.Options || [])
       .filter(
         (option): option is NonNullable<typeof option> & { Value: number } =>
           typeof option.Value === 'number'
@@ -263,6 +286,8 @@ export async function executeDataversePrimitive(
         value: option.Value,
         label: option.Label?.UserLocalizedLabel?.Label || String(option.Value)
       }));
+    choiceCache.set(key, options);
+    return options;
   };
 
   const resolveChoiceValue = async (
@@ -307,16 +332,24 @@ export async function executeDataversePrimitive(
   ): ResolvedDataverseColumn | undefined => {
     const lower = requestedName.trim().toLowerCase();
     const normalized = normalize(requestedName);
-    const attribute =
-      attributes.find((item) => item.LogicalName?.toLowerCase() === lower) ||
-      attributes.find(
-        (item) => item.DisplayName?.UserLocalizedLabel?.Label?.toLowerCase() === lower
-      ) ||
-      attributes.find(
-        (item) =>
-          normalize(item.LogicalName || '') === normalized ||
-          normalize(item.DisplayName?.UserLocalizedLabel?.Label || '') === normalized
+    const exact = attributes.find((item) => item.LogicalName?.toLowerCase() === lower);
+    const labels = attributes.filter(
+      (item) => item.DisplayName?.UserLocalizedLabel?.Label?.toLowerCase() === lower
+    );
+    const candidates = exact
+      ? [exact]
+      : labels.length
+        ? labels
+        : attributes.filter(
+            (item) =>
+              normalize(item.LogicalName || '') === normalized ||
+              normalize(item.DisplayName?.UserLocalizedLabel?.Label || '') === normalized
+          );
+    if (candidates.length > 1)
+      throw new Error(
+        `Column “${requestedName}” is ambiguous. Use an exact logical name: ${candidates.map((item) => item.LogicalName).join(', ')}.`
       );
+    const attribute = candidates[0];
     if (!attribute?.LogicalName) return undefined;
     return {
       requestedName,
@@ -762,7 +795,8 @@ export async function executeDataversePrimitive(
 
   const prepareListMembership = async (
     listIdInput: string,
-    memberInputs: MarketingListMemberInput[]
+    memberInputs: MarketingListMemberInput[],
+    allowEmpty = false
   ): Promise<PreparedMarketingListMembership> => {
     const listId = normalizeGuid(listIdInput, 'marketing-list record');
     if (!Array.isArray(memberInputs) || memberInputs.length === 0) {
@@ -919,7 +953,7 @@ export async function executeDataversePrimitive(
     );
     const alreadyMembers = resolvedMembers.filter((member) => existingIds.has(member.recordId));
     const members = resolvedMembers.filter((member) => !existingIds.has(member.recordId));
-    if (!members.length) {
+    if (!members.length && !allowEmpty) {
       throw new Error(
         `All ${resolvedMembers.length} matching ${memberEntity.displayCollectionName || memberEntity.logicalName} are already members of ${listName}.`
       );
@@ -943,7 +977,8 @@ export async function executeDataversePrimitive(
 
   const executeListMembership = async (
     membership: PreparedMarketingListMembership,
-    selectedMemberIds: string[]
+    selectedMemberIds: string[],
+    expectedUserId?: string
   ): Promise<MarketingListMembershipExecutionResult> => {
     if (membership.environmentOrigin !== request.origin) {
       throw new Error(
@@ -968,11 +1003,12 @@ export async function executeDataversePrimitive(
       selectedIds.map((id) => ({
         table: approvedMembers.get(id)!.tableLogicalName,
         recordId: id
-      }))
+      })),
+      Boolean(expectedUserId)
     );
     if (
-      revalidated.members.length !== selectedIds.length ||
-      revalidated.alreadyMembers.length > 0
+      !expectedUserId &&
+      (revalidated.members.length !== selectedIds.length || revalidated.alreadyMembers.length > 0)
     ) {
       throw new Error(
         'Marketing-list membership changed after the preview was prepared. Ask Oddy to prepare a fresh preview.'
@@ -994,6 +1030,21 @@ export async function executeDataversePrimitive(
       throw new Error(
         'The Dataverse action metadata changed after the preview was prepared. Ask Oddy to prepare a fresh preview.'
       );
+    }
+    if (expectedUserId) {
+      if (window.location.origin !== request.origin)
+        throw new Error('The Dataverse environment changed.');
+      const identity = await getJson<{ UserId?: string }>(`${request.origin}/api/data/v9.2/WhoAmI`);
+      if (normalizeGuid(identity.UserId || '', 'signed-in user') !== expectedUserId)
+        throw new Error('The signed-in Dataverse user changed.');
+      if (!revalidated.members.length)
+        return {
+          listId: revalidated.listId,
+          listName: revalidated.listName,
+          memberTableLogicalName: revalidated.memberTableLogicalName,
+          addedMemberIds: [],
+          addedMemberNames: []
+        };
     }
     const invocation = buildAddListMembersInvocation(
       revalidated,
@@ -1039,7 +1090,8 @@ export async function executeDataversePrimitive(
   };
 
   const prepareMutation = async (
-    input: DataverseMutationInput
+    input: DataverseMutationInput,
+    readCurrent = true
   ): Promise<PreparedDataverseMutation> => {
     if (input.operation !== 'create' && input.operation !== 'update') {
       throw new Error('The mutation operation must be create or update.');
@@ -1132,7 +1184,7 @@ export async function executeDataversePrimitive(
     let recordId: string | undefined;
     let recordName: string | undefined;
     let etag: string | undefined;
-    if (input.operation === 'update') {
+    if (input.operation === 'update' && readCurrent) {
       recordId = input.recordId?.replace(/[{}]/g, '').trim() || '';
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(recordId)) {
         throw new Error('A valid record GUID is required for an update preview.');
@@ -1307,7 +1359,283 @@ export async function executeDataversePrimitive(
     };
   };
 
+  const bulkRecord = (
+    entity: ResolvedDataverseEntity,
+    record: Record<string, unknown>,
+    columns: string[]
+  ) => {
+    const values: Record<string, unknown> = {};
+    const lookupTypes: Record<string, string> = {};
+    for (const column of columns) {
+      const property = Object.hasOwn(record, column) ? column : `_${column}_value`;
+      values[column] = record[property] ?? null;
+      const type = record[`${property}@Microsoft.Dynamics.CRM.lookuplogicalname`];
+      if (typeof type === 'string') lookupTypes[column] = type;
+    }
+    return {
+      id: normalizeGuid(String(record[entity.primaryIdAttribute] || ''), 'bulk record'),
+      name: entity.primaryNameAttribute
+        ? String(record[entity.primaryNameAttribute] || '') || undefined
+        : undefined,
+      etag: typeof record['@odata.etag'] === 'string' ? record['@odata.etag'] : undefined,
+      values,
+      lookupTypes
+    };
+  };
+  const validateBulkFields = (fields: PreparedDataverseMutationField[]) => {
+    for (const field of fields) {
+      if (field.lookup || field.proposedValue === null) continue;
+      let value = field.proposedValue;
+      const type = field.attributeType;
+      if (['Integer', 'BigInt', 'Decimal', 'Double', 'Money'].includes(type || '')) {
+        if (
+          typeof value === 'string' &&
+          value.trim() &&
+          /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?$/i.test(value.trim())
+        )
+          value = Number(value);
+        if (
+          typeof value !== 'number' ||
+          !Number.isFinite(value) ||
+          (['Integer', 'BigInt'].includes(type!) && !Number.isSafeInteger(value)) ||
+          (type === 'Integer' && (value < -2147483648 || value > 2147483647))
+        )
+          throw new Error(`Invalid numeric value for ${field.logicalName}.`);
+      } else if (type === 'Boolean') {
+        if (value === 'true') value = true;
+        if (value === 'false') value = false;
+        if (typeof value !== 'boolean')
+          throw new Error(`Invalid boolean value for ${field.logicalName}.`);
+      } else if (['String', 'Memo', 'DateTime', 'Uniqueidentifier'].includes(type || '')) {
+        if (typeof value !== 'string')
+          throw new Error(`${field.logicalName} requires text, not an inferred conversion.`);
+        if (
+          type === 'DateTime' &&
+          (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
+            !Number.isFinite(Date.parse(value)))
+        )
+          throw new Error(
+            `Use an explicit ISO date/time with UTC or offset for ${field.logicalName}; the browser time zone is never inferred.`
+          );
+        if (type === 'Uniqueidentifier') normalizeGuid(value, field.logicalName);
+      } else if (!['Picklist', 'State', 'Status'].includes(type || ''))
+        throw new Error(`Unsupported bulk field type: ${type}.`);
+      field.proposedValue = value;
+    }
+    return fields;
+  };
+
   try {
+    if (request.action.startsWith('bulk_') && window.location.origin !== request.origin)
+      throw new Error('The Dataverse environment changed.');
+    if (request.action === 'bulk_identity') {
+      const identity = await getJson<{ UserId?: string }>(`${request.origin}/api/data/v9.2/WhoAmI`);
+      return {
+        ok: true,
+        action: request.action,
+        userId: normalizeGuid(identity.UserId || '', 'signed-in user')
+      };
+    }
+    if (request.action === 'bulk_fields') {
+      if (!request.values.length || request.values.length > 50)
+        throw new Error('Validate 1–50 bounded rows at a time.');
+      const entity = await resolveEntity(request.table);
+      const bulkFields = [];
+      for (const values of request.values)
+        bulkFields.push(
+          validateBulkFields(
+            (
+              await prepareMutation(
+                { operation: request.operation, table: entity.logicalName, values },
+                false
+              )
+            ).fields
+          )
+        );
+      return { ok: true, action: request.action, entity, bulkFields };
+    }
+    if (request.action === 'bulk_page') {
+      if (request.query.top !== undefined)
+        throw new Error('Bulk selection cannot have a top limit.');
+      const resolved = await resolveQuery(request.query);
+      if (resolved.unresolvedColumns.length)
+        throw new Error(
+          `Unresolved bulk columns: ${resolved.unresolvedColumns.join(', ')}. No filters were dropped.`
+        );
+      for (const filter of resolved.query.filters || []) {
+        const column = resolved.resolvedColumns.find(
+          (column) => column.logicalName === filter.column
+        )!;
+        if (
+          filter.value !== undefined &&
+          ['Picklist', 'State', 'Status'].includes(column.attributeType || '')
+        )
+          filter.value = String(
+            (await resolveChoiceValue(resolved.entity, column, filter.value)).value
+          );
+      }
+      const page = request.cursor?.page || 1;
+      if (!Number.isSafeInteger(page) || page < 1 || (page > 1 && !request.cursor?.cookie))
+        throw new Error('A valid paging cookie is required.');
+      let xml = buildFetchXml(
+        resolved.entity,
+        {
+          ...resolved.query,
+          orderBy: [{ column: resolved.entity.primaryIdAttribute, direction: 'asc' }]
+        },
+        { pageSize: 50 }
+      ).fetchXml;
+      xml = xml.replace('count="50"', 'count="500"').replace('page="1"', `page="${page}"`);
+      if (request.cursor) {
+        if (request.cursor.cookie.length > 100000 || /<!DOCTYPE/i.test(request.cursor.cookie))
+          throw new Error('Invalid paging cookie.');
+        xml = xml.replace('<fetch ', `<fetch paging-cookie="${xmlEscape(request.cursor.cookie)}" `);
+      }
+      const url = new URL(`${request.origin}/api/data/v9.2/${resolved.entity.entitySetName}`);
+      url.searchParams.set('fetchXml', xml);
+      const response = await fetch(url.toString(), {
+        credentials: 'include',
+        headers: {
+          ...headers,
+          Prefer:
+            'odata.include-annotations="Microsoft.Dynamics.CRM.fetchxmlpagingcookie,Microsoft.Dynamics.CRM.morerecords,Microsoft.Dynamics.CRM.lookuplogicalname"'
+        }
+      });
+      if (!response.ok)
+        throw new Error(
+          `Bulk selection failed (${response.status}): ${(await response.text()).slice(0, 300)}`
+        );
+      const payload = (await response.json()) as Record<string, unknown> & {
+        value?: Array<Record<string, unknown>>;
+      };
+      let cookie =
+        typeof payload['@Microsoft.Dynamics.CRM.fetchxmlpagingcookie'] === 'string'
+          ? (payload['@Microsoft.Dynamics.CRM.fetchxmlpagingcookie'] as string)
+          : '';
+      if (cookie) {
+        const parsed = new DOMParser().parseFromString(cookie, 'application/xml');
+        if (parsed.querySelector('parsererror')) throw new Error('Invalid server paging cookie.');
+        cookie = parsed.documentElement.getAttribute('pagingcookie') ?? cookie;
+        for (let decode = 0; decode < 3 && /^\s*%/.test(cookie); decode++)
+          cookie = decodeURIComponent(cookie);
+      }
+      const more = payload['@Microsoft.Dynamics.CRM.morerecords'];
+      if ((more === true || (more === undefined && (payload.value?.length || 0) >= 500)) && !cookie)
+        throw new Error(
+          'Dataverse did not provide a safe paging cookie; selection was not truncated or approved.'
+        );
+      const cursor = more !== false && cookie ? { page: page + 1, cookie } : undefined;
+      return {
+        ok: true,
+        action: request.action,
+        entity: resolved.entity,
+        query: resolved.query,
+        bulkPage: {
+          records: (payload.value || []).map((record) =>
+            bulkRecord(resolved.entity, record, resolved.query.columns || [])
+          ),
+          cursor
+        }
+      };
+    }
+    if (request.action === 'bulk_read_versions') {
+      if (!request.ids.length || request.ids.length > 50 || request.columns.length > 20)
+        throw new Error('Read at most 50 record versions and 20 fields.');
+      const entity = await resolveEntity(request.table);
+      if (request.requireConcurrency !== false && entity.optimisticConcurrencyEnabled !== true)
+        throw new Error(
+          'This table does not advertise optimistic concurrency; safe bulk updates are unavailable.'
+        );
+      const attributes = await getAttributes(entity);
+      const columns = request.columns.map((name) => {
+        const column = resolveColumn(name, attributes);
+        if (!column) throw new Error(`Unreadable bulk column ${name}.`);
+        return column;
+      });
+      const url = new URL(`${request.origin}/api/data/v9.2/${entity.entitySetName}`);
+      url.searchParams.set(
+        '$select',
+        [
+          ...new Set(
+            [
+              entity.primaryIdAttribute,
+              entity.primaryNameAttribute,
+              ...columns.map((column) =>
+                ['Lookup', 'Customer', 'Owner'].includes(column.attributeType || '')
+                  ? `_${column.logicalName}_value`
+                  : column.logicalName
+              )
+            ].filter(Boolean)
+          )
+        ].join(',')
+      );
+      url.searchParams.set(
+        '$filter',
+        request.ids
+          .map((id) => `${entity.primaryIdAttribute} eq ${normalizeGuid(id, 'bulk record')}`)
+          .join(' or ')
+      );
+      const payload = await getJson<{
+        value?: Array<Record<string, unknown>>;
+        '@odata.nextLink'?: string;
+      }>(url.toString(), true);
+      if (payload['@odata.nextLink'])
+        throw new Error(
+          'Record-version response was unexpectedly paged; no incomplete preview is allowed.'
+        );
+      return {
+        ok: true,
+        action: request.action,
+        entity,
+        bulkPage: {
+          records: (payload.value || []).map((record) =>
+            bulkRecord(
+              entity,
+              record,
+              columns.map((column) => column.logicalName)
+            )
+          )
+        }
+      };
+    }
+    if (request.action === 'bulk_list_info') {
+      const entity = await resolveEntity(request.table);
+      if (
+        !['account', 'contact', 'lead'].includes(entity.logicalName) ||
+        entity.objectTypeCode === undefined
+      )
+        throw new Error('Marketing lists require a resolved account, contact, or lead table.');
+      const list = await resolveEntity('list');
+      const attrs = await getAttributes(list);
+      const name = resolveColumn('listname', attrs),
+        type = resolveColumn('type', attrs),
+        memberType = resolveColumn('createdfromcode', attrs);
+      if (!name || !type || !memberType)
+        throw new Error('Could not resolve marketing-list columns.');
+      const listId = normalizeGuid(request.listId, 'marketing list');
+      const record = await getJson<Record<string, unknown>>(
+        `${request.origin}/api/data/v9.2/${list.entitySetName}(${listId})?$select=${name.logicalName},${type.logicalName},${memberType.logicalName}`
+      );
+      if (
+        record[type.logicalName] !== false ||
+        record[memberType.logicalName] !== entity.objectTypeCode
+      )
+        throw new Error('The list must be static and match the selected member table.');
+      const bulkList: PreparedMarketingListMembership = {
+        id: crypto.randomUUID(),
+        environmentOrigin: request.origin,
+        listId,
+        listName: String(record[name.logicalName] || listId),
+        listEntitySetName: list.entitySetName,
+        memberTableLogicalName: entity.logicalName,
+        memberTableDisplayName: entity.displayCollectionName,
+        memberObjectTypeCode: entity.objectTypeCode,
+        members: [],
+        alreadyMembers: [],
+        actionSignature: await resolveAddListMembersSignature()
+      };
+      return { ok: true, action: request.action, entity, bulkList };
+    }
     if (request.action === 'prepare_list_membership') {
       const listMembership = await prepareListMembership(request.listId, request.members);
       return {
@@ -1320,7 +1648,8 @@ export async function executeDataversePrimitive(
     if (request.action === 'execute_list_membership') {
       const listMembershipResult = await executeListMembership(
         request.membership,
-        request.selectedMemberIds
+        request.selectedMemberIds,
+        request.expectedUserId
       );
       return {
         ok: true,
