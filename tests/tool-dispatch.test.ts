@@ -106,6 +106,50 @@ describe('assistant tool dispatch', () => {
     expect(executeFlowPrimitiveInActiveTab).not.toHaveBeenCalled();
   });
 
+  it('routes complete definition proposals without exposing execution to the model', async () => {
+    vi.mocked(executeFlowPrimitiveInActiveTab).mockResolvedValue({
+      ok: false,
+      action: 'prepare_flow_change',
+      error: 'test'
+    });
+    const definition = { name: 'Existing flow', clientData: '{"properties":{}}' };
+    await executeAssistantTool(
+      context,
+      'prepare_dataverse_flow_change',
+      JSON.stringify({
+        operation: 'update',
+        workflowId: 'flow-id',
+        etag: 'W/"1"',
+        definition
+      })
+    );
+    expect(executeFlowPrimitiveInActiveTab).toHaveBeenCalledWith(context, {
+      action: 'prepare_flow_change',
+      origin: context.origin,
+      operation: 'update',
+      workflowId: 'flow-id',
+      etag: 'W/"1"',
+      definition
+    });
+    vi.mocked(executeFlowPrimitiveInActiveTab).mockClear();
+    for (const invalid of [
+      { operation: 'create', definition },
+      { operation: 'update', definition, spec: {} },
+      { operation: 'update', definition: [] }
+    ]) {
+      expect(
+        (
+          await executeAssistantTool(
+            context,
+            'prepare_dataverse_flow_change',
+            JSON.stringify(invalid)
+          )
+        ).ok
+      ).toBe(false);
+    }
+    expect(executeFlowPrimitiveInActiveTab).not.toHaveBeenCalled();
+  });
+
   it('routes bulk membership preparation as one primitive', async () => {
     vi.mocked(executePrimitiveInActiveTab).mockResolvedValue({
       ok: false,

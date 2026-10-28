@@ -40,7 +40,7 @@ export const SKILL_TOOL_OPTIONS: Array<{
   {
     name: 'get_dataverse_flow',
     label: 'Read cloud flow',
-    description: 'Read a cloud flow and its typed Oddy definition when supported.'
+    description: 'Read a cloud flow, its complete saved definition, and row version.'
   },
   {
     name: 'open_dataverse_flow_designer',
@@ -55,7 +55,7 @@ export const SKILL_TOOL_OPTIONS: Array<{
   {
     name: 'prepare_dataverse_flow_change',
     label: 'Prepare cloud-flow change',
-    description: 'Prepare a typed cloud-flow create or edit proposal that requires approval.'
+    description: 'Prepare a typed flow create or general definition edit requiring approval.'
   },
   {
     name: 'prepare_dataverse_record_change',
@@ -383,7 +383,7 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'get_dataverse_flow',
       description:
-        'Read one modern cloud flow by exact workflow ID. Oddy-created flows include a complete typed specification that must be preserved and revised for edits. Other flows are inspection-only.',
+        'Read one modern cloud flow by exact workflow ID, including its latest complete definition and ETag. Any unmanaged flow with a readable definition can be edited after approval, regardless of creator. Use definition and the exact ETag for general edits; preserve all unrelated content. typedEditable indicates whether the optional typed spec can be used instead. Managed flows are read-only.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -424,16 +424,34 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'prepare_dataverse_flow_change',
       description:
-        'Prepare, but never execute, a typed Dataverse-only cloud-flow create or update. For updates, read the exact flow first and submit its complete revised specification. V1 supports manual or Dataverse row triggers and sequential list/get/add/update row actions with scalar text, number, boolean, date, GUID, trigger-column, or earlier single-row output values. Choice, lookup, collection-to-scalar, and arbitrary expression writes are rejected. New flows are created Off in the default solution. Updates save an unpublished draft only and never publish or activate the flow; publishing remains a separate Power Automate step. Only Oddy-created unmanaged flows can be edited.',
+        'Prepare a cloud-flow change for explicit approval; never writes. For existing unmanaged flows, first get_dataverse_flow, then pass operation update, exact workflowId, etag from that read, and definition with name, description, and complete revised clientData JSON string. General definition edits support existing connectors, triggers, conditions, loops, nested actions, and expressions, regardless of creator. Preserve unrelated fields, designer metadata, and connection references; never invent credentials or connection references. Resolve Dataverse tables/columns using metadata (action entityName uses the entity-set name). Do not rely on a stale embedded spec. Do not pass spec with definition. Typed spec remains available for Dataverse-only creates and typedEditable updates. New flows are created Off. Updates save an unpublished draft only, never publish or activate. Managed flows remain read-only.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
           operation: { type: 'string', enum: ['create', 'update'] },
           workflowId: { type: 'string', description: 'Required for update.' },
+          etag: {
+            type: 'string',
+            description: 'Exact ETag from get_dataverse_flow, required with definition.'
+          },
+          definition: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              name: { type: 'string' },
+              description: { type: 'string' },
+              clientData: {
+                type: 'string',
+                description:
+                  'Complete revised clientdata JSON, including properties.definition, connectionReferences, and preserved metadata. Not a partial patch.'
+              }
+            },
+            required: ['name', 'clientData']
+          },
           spec: FLOW_SPEC_SCHEMA
         },
-        required: ['operation', 'spec']
+        required: ['operation']
       }
     }
   },

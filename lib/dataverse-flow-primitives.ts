@@ -2,6 +2,7 @@ import type {
   DataverseConnectionReferenceSummary,
   DataverseFlowAction,
   DataverseFlowDetail,
+  DataverseFlowDefinition,
   DataverseFlowFilter,
   DataverseFlowPrimitiveRequest,
   DataverseFlowPrimitiveResult,
@@ -326,6 +327,41 @@ export async function executeDataverseFlowPrimitive(
       }
       return undefined;
     };
+    const normalizeDefinition = (input: DataverseFlowDefinition): DataverseFlowDefinition => {
+      const name = requireString(input?.name, 'Flow name', 200);
+      if (input.description !== undefined && typeof input.description !== 'string')
+        throw new Error('Flow description must be text.');
+      const clientData = requireString(
+        input.clientData,
+        'Complete flow clientdata JSON',
+        1_000_000
+      );
+      const parsed = JSON.parse(clientData);
+      const object = (value: unknown): value is Record<string, unknown> =>
+        Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+      if (!object(parsed) || !object(parsed.properties) || !object(parsed.properties.definition))
+        throw new Error('Flow clientdata must contain properties.definition.');
+      const definition = parsed.properties.definition;
+      if (
+        !object(definition.triggers) ||
+        Object.keys(definition.triggers).length !== 1 ||
+        !object(definition.actions)
+      )
+        throw new Error('A flow definition requires one trigger and an actions object.');
+      for (const node of [
+        ...Object.values(definition.triggers),
+        ...Object.values(definition.actions)
+      ]) {
+        if (!object(node) || typeof node.type !== 'string' || !node.type.trim())
+          throw new Error('Every flow trigger and action must have a type.');
+      }
+      if (
+        parsed.properties.connectionReferences !== undefined &&
+        !object(parsed.properties.connectionReferences)
+      )
+        throw new Error('Flow connectionReferences must be an object.');
+      return { name, description: input.description, clientData: JSON.stringify(parsed) };
+    };
     const flowDetail = (record: WorkflowRecord): DataverseFlowDetail => {
       if (!record.workflowid || !record.name)
         throw new Error('Dataverse returned an invalid flow record.');
@@ -338,6 +374,16 @@ export async function executeDataverseFlowPrimitive(
       const definitionMatches = Boolean(
         spec && record.clientdata && definitionMatchesSpec(record.clientdata, spec)
       );
+      let definition: DataverseFlowDefinition | undefined;
+      try {
+        definition = normalizeDefinition({
+          name: record.name,
+          description: record.description || undefined,
+          clientData: record.clientdata || ''
+        });
+      } catch {
+        // Still allow inspection/navigation for flows with missing or malformed definitions.
+      }
       return {
         workflowId: record.workflowid,
         name: record.name,
@@ -345,19 +391,21 @@ export async function executeDataverseFlowPrimitive(
         state: stateName(record.statecode),
         isManaged,
         modifiedOn: record.modifiedon,
-        oddyEditable: Boolean(spec) && definitionMatches && !isManaged,
+        oddyEditable: Boolean(definition) && !isManaged,
+        typedEditable: Boolean(spec) && definitionMatches && !isManaged,
+        definition,
         componentState: record.componentstate,
         etag: record['@odata.etag'],
         spec,
         warnings: isManaged
           ? ['Managed flows are read-only in Oddy.']
-          : spec && !definitionMatches
-            ? [
-                'This Oddy flow definition changed outside Oddy or contains unsupported generated fields. Read it as inspection-only and prepare a new flow instead of overwriting it.'
-              ]
-            : spec
-              ? undefined
-              : ['Oddy can inspect this flow but cannot safely edit definitions it did not create.']
+          : !definition
+            ? ['The saved flow definition is missing, malformed, or too large to edit in Oddy.']
+            : !definitionMatches
+              ? [
+                  'Use a complete definition edit based on the latest read; the embedded typed specification may be missing or outdated.'
+                ]
+              : undefined
       };
     };
     const getFlow = async (workflowId: string): Promise<DataverseFlowDetail> => {
@@ -384,7 +432,16 @@ export async function executeDataverseFlowPrimitive(
       const payload = await getJson<{ value?: WorkflowRecord[] }>(url.toString(), true);
       return (payload.value || [])
         .map(flowDetail)
-        .map(({ etag: _etag, spec: _spec, warnings: _warnings, ...summary }) => summary);
+        .map(
+          ({
+            etag: _etag,
+            spec: _spec,
+            definition: _definition,
+            typedEditable: _typed,
+            warnings: _warnings,
+            ...summary
+          }) => summary
+        );
     };
 
     const normalizeFilter = async (
@@ -816,6 +873,44 @@ export async function executeDataverseFlowPrimitive(
         }
       };
     }
+    const draftWarnings = [
+      'This approval saves an unpublished draft only. It does not publish, activate, or change the running flow.',
+      'Review and publish the saved draft separately in Power Automate when ready.'
+    ];
+    if (request.action === 'prepare_flow_change' && 'definition' in request) {
+      const before = await getFlow(request.workflowId);
+      if (before.isManaged) throw new Error('Managed cloud flows cannot be edited.');
+      if (!before.definition) throw new Error('The current flow definition cannot be edited.');
+      if (!request.etag || request.etag === '*' || !before.etag || before.etag !== request.etag)
+        throw new Error(
+          'The flow changed or its row version is missing. Read it again before preparing changes.'
+        );
+      const after = normalizeDefinition({
+        ...request.definition,
+        description: request.definition.description ?? before.description
+      });
+      return {
+        ok: true,
+        action: request.action,
+        flowChange: {
+          mode: 'definition',
+          id: crypto.randomUUID(),
+          operation: 'update',
+          environmentOrigin: request.origin,
+          workflowId: before.workflowId,
+          etag: before.etag,
+          before: { ...before, definition: before.definition },
+          after,
+          generatedClientData: after.clientData,
+          saveMode: 'draft',
+          warnings: [
+            ...draftWarnings,
+            'Review the complete before/after definition, including all triggers, nested actions, expressions, and connection references. Unchanged content must be preserved.',
+            'General definition edits receive structural checks, not full connector or expression validation. Power Automate may require additional validation before publishing.'
+          ]
+        }
+      };
+    }
     if (request.action === 'prepare_flow_change') {
       if (request.operation === 'update' && !request.workflowId) {
         throw new Error('A workflow ID is required to update a flow.');
@@ -824,9 +919,9 @@ export async function executeDataverseFlowPrimitive(
       const before =
         request.operation === 'update' ? await getFlow(request.workflowId!) : undefined;
       if (before?.isManaged) throw new Error('Managed cloud flows cannot be edited.');
-      if (before && !before.oddyEditable) {
+      if (before && !before.typedEditable) {
         throw new Error(
-          'This flow was not created by Oddy, so its definition cannot yet be edited safely. Oddy can still inspect it.'
+          'Use a complete definition edit for this flow, based on get_dataverse_flow and its exact ETag. The typed specification cannot safely replace the current definition.'
         );
       }
       if (before && (!before.etag || before.etag === '*')) {
@@ -841,10 +936,7 @@ export async function executeDataverseFlowPrimitive(
               'The flow will be created in the environment default solution.',
               'The new flow will remain Off until it is activated separately.'
             ]
-          : [
-              'This approval saves an unpublished draft only. It does not publish, activate, or change the running flow.',
-              'Review and publish the saved draft separately in Power Automate when ready.'
-            ];
+          : draftWarnings;
       return {
         ok: true,
         action: request.action,
@@ -864,6 +956,8 @@ export async function executeDataverseFlowPrimitive(
     }
     if (request.action === 'execute_flow_change') {
       const change = request.change;
+      if (change.mode === 'definition' && change.operation !== 'update')
+        throw new Error('General definition changes only support updates.');
       if (change.environmentOrigin !== request.origin) {
         throw new Error('The approved flow preview belongs to a different Dataverse environment.');
       }
@@ -872,8 +966,12 @@ export async function executeDataverseFlowPrimitive(
           'This older flow preview does not authorize a draft save. Prepare a fresh preview.'
         );
       }
-      const normalized = await normalizeSpec(change.after);
-      const generatedClientData = compileClientData(normalized);
+      const normalized =
+        change.mode === 'definition'
+          ? normalizeDefinition(change.after)
+          : await normalizeSpec(change.after);
+      const generatedClientData =
+        'clientData' in normalized ? normalized.clientData : compileClientData(normalized);
       if (generatedClientData !== change.generatedClientData) {
         throw new Error('The prepared flow definition changed. Prepare a fresh preview.');
       }
@@ -914,10 +1012,22 @@ export async function executeDataverseFlowPrimitive(
       const current = await getFlow(change.workflowId);
       if (current.isManaged)
         throw new Error('The flow became managed and can no longer be edited.');
-      if (!current.oddyEditable)
+      if (change.mode === 'definition') {
+        if (
+          !current.definition ||
+          !change.before?.definition ||
+          current.definition.clientData !== change.before.definition.clientData ||
+          current.name !== change.before.name ||
+          current.description !== change.before.description
+        )
+          throw new Error(
+            'The flow definition changed after this preview was prepared. Prepare a fresh preview.'
+          );
+      } else if (!current.typedEditable) {
         throw new Error(
-          'The current flow draft is no longer safely editable by Oddy. Prepare a fresh preview.'
+          'The typed flow draft is no longer safely editable. Prepare a fresh definition preview.'
         );
+      }
       if (
         current.etag !== change.etag ||
         current.componentState !== change.before?.componentState

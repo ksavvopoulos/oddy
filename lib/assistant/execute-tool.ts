@@ -168,6 +168,31 @@ export async function executeAssistantTool(
       if (args.operation !== 'create' && args.operation !== 'update') {
         throw new Error('A valid flow-change operation is required.');
       }
+      if (args.definition !== undefined) {
+        if (args.operation !== 'update' || args.spec !== undefined)
+          throw new Error('Definition edits require update and cannot include a typed spec.');
+        if (
+          !args.definition ||
+          typeof args.definition !== 'object' ||
+          Array.isArray(args.definition)
+        )
+          throw new Error('A complete definition is required.');
+        const definition = args.definition as Record<string, unknown>;
+        return executeFlowPrimitiveInActiveTab(context, {
+          action: 'prepare_flow_change',
+          origin: context.origin,
+          operation: 'update',
+          workflowId: stringValue(args.workflowId),
+          etag: stringValue(args.etag),
+          definition: {
+            name: stringValue(definition.name),
+            ...(definition.description !== undefined
+              ? { description: definition.description as string }
+              : {}),
+            clientData: stringValue(definition.clientData)
+          }
+        });
+      }
       return executeFlowPrimitiveInActiveTab(context, {
         action: 'prepare_flow_change',
         origin: context.origin,

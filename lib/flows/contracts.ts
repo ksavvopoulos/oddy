@@ -94,10 +94,21 @@ export interface DataverseFlowDetail extends DataverseFlowSummary {
   componentState?: number;
   etag?: string;
   spec?: DataverseFlowSpec;
+  /** Whether the saved definition still matches Oddy's typed compiler output. */
+  typedEditable?: boolean;
+  /** Latest saved definition, including designer metadata and all connectors. */
+  definition?: DataverseFlowDefinition;
   warnings?: string[];
 }
 
-export interface PreparedDataverseFlowChange {
+export interface DataverseFlowDefinition {
+  name: string;
+  description?: string;
+  /** Complete workflow clientdata JSON, not just properties.definition. */
+  clientData: string;
+}
+
+export interface PreparedTypedDataverseFlowChange {
   id: string;
   operation: DataverseFlowOperation;
   environmentOrigin: string;
@@ -110,6 +121,23 @@ export interface PreparedDataverseFlowChange {
   saveMode?: 'draft';
   warnings: string[];
 }
+
+export interface PreparedDataverseFlowDefinitionChange {
+  mode: 'definition';
+  id: string;
+  operation: 'update';
+  environmentOrigin: string;
+  workflowId: string;
+  etag: string;
+  before: DataverseFlowDetail & { definition: DataverseFlowDefinition };
+  after: DataverseFlowDefinition;
+  generatedClientData: string;
+  saveMode?: 'draft';
+  warnings: string[];
+}
+
+export type PreparedDataverseFlowChange =
+  (PreparedTypedDataverseFlowChange & { mode?: 'typed' }) | PreparedDataverseFlowDefinitionChange;
 
 export interface DataverseFlowDesignerTarget {
   environmentId: string;
@@ -137,6 +165,14 @@ export type DataverseFlowPrimitiveRequest =
       operation: DataverseFlowOperation;
       workflowId?: string;
       spec: DataverseFlowSpec;
+    }
+  | {
+      action: 'prepare_flow_change';
+      origin: string;
+      operation: 'update';
+      workflowId: string;
+      etag: string;
+      definition: DataverseFlowDefinition;
     }
   | {
       action: 'execute_flow_change';

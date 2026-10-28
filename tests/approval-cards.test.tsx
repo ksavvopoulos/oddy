@@ -9,6 +9,7 @@ import {
 } from '../entrypoints/sidepanel/ApprovalCards';
 import type { ApprovalActions } from '../entrypoints/sidepanel/useApprovals';
 import { conversationFixture, flowProposal } from './fixtures/proposals';
+import { definitionProposal } from './fixtures/flow-definitions';
 
 function approvalActions(): ApprovalActions {
   const conversation = conversationFixture();
@@ -46,6 +47,36 @@ function approvalActions(): ApprovalActions {
 }
 
 describe('Cloud-flow draft save disclosure', () => {
+  it('shows all definition changes and complete documents for a general flow edit', () => {
+    const item = {
+      ...conversationFixture().transcript[1]!,
+      pendingFlowChanges: [definitionProposal]
+    };
+    const approvals = approvalActions();
+    const pending = renderToStaticMarkup(createElement(FlowChangeCards, { item, approvals }));
+    expect(pending).toContain('Definition changes');
+    expect(pending).toContain('entityName');
+    expect(pending).toContain('contact');
+    expect(pending).toContain('contacts');
+    expect(pending).toContain('Repeat_audit');
+    expect(pending).toContain('Foreach');
+    expect(pending).toContain('Complete definition before');
+    expect(pending).toContain('Complete definition after');
+    expect(pending).toContain('designerMetadata');
+    expect(pending).toContain('connectionReferences');
+    expect(pending).toContain('Approve draft save');
+    expect(pending).not.toContain('Sequential actions');
+    const historical = renderToStaticMarkup(
+      createElement(FlowChangeCards, {
+        item: { ...item, historical: true },
+        approvals
+      })
+    );
+    expect(historical).toContain('Expired preview');
+    expect(historical).not.toContain('<button');
+    expect(approvals.approveFlowChange).not.toHaveBeenCalled();
+  });
+
   it('distinguishes saving a draft from publishing an active flow', () => {
     const item = {
       ...conversationFixture().transcript[1]!,

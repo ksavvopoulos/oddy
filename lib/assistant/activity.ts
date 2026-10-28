@@ -87,9 +87,11 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
       return {
         name: toolName,
         label: `Read ${result.flow?.name || 'cloud flow'}`,
-        summary: result.flow?.oddyEditable ? 'Typed definition loaded' : 'Inspection only',
+        summary: result.flow?.oddyEditable
+          ? 'Definition loaded · edits require approval'
+          : 'Inspection only',
         details: result.flow
-          ? `${result.flow.workflowId} · ${result.flow.state} · ${result.flow.spec?.actions.length || 0} supported actions`
+          ? `${result.flow.workflowId} · ${result.flow.state}${result.flow.warnings?.length ? ` · ${result.flow.warnings.join(' ')}` : ''}`
           : undefined
       };
     }
@@ -107,7 +109,10 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
       return {
         name: toolName,
         label: `Prepared cloud-flow ${result.flowChange?.operation || 'change'}`,
-        summary: `${result.flowChange?.after.actions.length || 0} action${result.flowChange?.after.actions.length === 1 ? '' : 's'} awaiting approval`,
+        summary:
+          result.flowChange?.mode === 'definition'
+            ? 'Complete definition changes awaiting approval'
+            : `${result.flowChange?.after.actions.length || 0} action${result.flowChange?.after.actions.length === 1 ? '' : 's'} awaiting approval`,
         details: result.flowChange
           ? `${result.flowChange.after.name}; no flow definition was written.`
           : 'No flow definition was written.'

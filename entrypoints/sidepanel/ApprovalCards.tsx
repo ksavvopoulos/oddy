@@ -3,6 +3,7 @@ import type { StoredTranscriptItem } from '../../lib/conversation-model';
 import type { ApprovalActions } from './useApprovals';
 import { sendExtensionMessage } from '../../lib/messages';
 import { formatPreviewValue } from './formatting';
+import { flowDefinitionDifferences } from '../../lib/flows/definition-diff';
 
 interface Props {
   item: StoredTranscriptItem;
@@ -127,10 +128,12 @@ export function FlowChangeCards({ item, approvals }: Props) {
           {item.pendingFlowChanges.map((change) => {
             const approval = flowChangeApprovals[change.id] || { status: 'pending' as const };
             const editable = !approvals.blocked && canEditApproval(approval, item.historical);
-            const trigger =
-              change.after.trigger.kind === 'manual'
+            const typed = change.mode !== 'definition' ? change.after : undefined;
+            const trigger = typed
+              ? typed.trigger.kind === 'manual'
                 ? 'Manual button trigger'
-                : `${change.after.trigger.change} on ${change.after.trigger.table} · ${change.after.trigger.scope}`;
+                : `${typed.trigger.change} on ${typed.trigger.table} · ${typed.trigger.scope}`
+              : undefined;
             return (
               <section key={change.id} className={`mutation-card ${approval.status}`}>
                 <div className="mutation-heading">
@@ -156,28 +159,61 @@ export function FlowChangeCards({ item, approvals }: Props) {
                       </small>
                     </div>
                   )}
-                  <div className="skill-change-tools">
-                    <span>Trigger</span>
-                    <small>{trigger}</small>
-                    <pre className="flow-action-spec">
-                      {JSON.stringify(change.after.trigger, null, 2)}
-                    </pre>
-                  </div>
-                  <div className="skill-change-tools">
-                    <span>Connection reference</span>
-                    <small>{change.after.connectionReferenceLogicalName}</small>
-                  </div>
-                  <div className="skill-change-workflow">
-                    <span>Sequential actions</span>
-                    <ol>
-                      {change.after.actions.map((action) => (
-                        <li key={action.id}>
-                          <strong>{action.id}</strong>: {action.kind} on {action.table}
-                          <pre className="flow-action-spec">{JSON.stringify(action, null, 2)}</pre>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
+                  {change.mode === 'definition' && (
+                    <div className="skill-change-workflow">
+                      <span>Definition changes</span>
+                      <ul>
+                        {flowDefinitionDifferences(change.before.definition, change.after).map(
+                          (difference) => (
+                            <li key={difference.path}>
+                              <strong>{difference.path}</strong>
+                              <pre className="flow-action-spec">{`Before: ${JSON.stringify(difference.before, null, 2) ?? '(absent)'}\nAfter: ${JSON.stringify(difference.after, null, 2) ?? '(removed)'}`}</pre>
+                            </li>
+                          )
+                        )}
+                      </ul>
+                      <details>
+                        <summary>Complete definition before</summary>
+                        <pre className="flow-action-spec">
+                          {JSON.stringify(JSON.parse(change.before.definition.clientData), null, 2)}
+                        </pre>
+                      </details>
+                      <details>
+                        <summary>Complete definition after</summary>
+                        <pre className="flow-action-spec">
+                          {JSON.stringify(JSON.parse(change.after.clientData), null, 2)}
+                        </pre>
+                      </details>
+                    </div>
+                  )}
+                  {typed && (
+                    <>
+                      <div className="skill-change-tools">
+                        <span>Trigger</span>
+                        <small>{trigger}</small>
+                        <pre className="flow-action-spec">
+                          {JSON.stringify(typed.trigger, null, 2)}
+                        </pre>
+                      </div>
+                      <div className="skill-change-tools">
+                        <span>Connection reference</span>
+                        <small>{typed.connectionReferenceLogicalName}</small>
+                      </div>
+                      <div className="skill-change-workflow">
+                        <span>Sequential actions</span>
+                        <ol>
+                          {typed.actions.map((action) => (
+                            <li key={action.id}>
+                              <strong>{action.id}</strong>: {action.kind} on {action.table}
+                              <pre className="flow-action-spec">
+                                {JSON.stringify(action, null, 2)}
+                              </pre>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    </>
+                  )}
                   {change.warnings.map((warning) => (
                     <p key={warning} className="mutation-note">
                       {warning}
@@ -189,7 +225,7 @@ export function FlowChangeCards({ item, approvals }: Props) {
                   {item.historical
                     ? 'This historical flow preview cannot be applied. Prepare a fresh preview to continue.'
                     : change.saveMode === 'draft'
-                      ? 'Only an unpublished draft will be saved. Publishing and activation require a separate step. Connection credentials are not changed.'
+                      ? 'Only an unpublished draft will be saved. Publishing and activation require a separate step. Review any connection-reference changes above.'
                       : 'Oddy will write only this validated flow definition. Connection credentials are not changed.'}
                 </p>
                 {approval.error && <p className="mutation-error">{approval.error}</p>}

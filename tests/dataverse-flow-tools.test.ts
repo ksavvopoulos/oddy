@@ -120,7 +120,7 @@ describe('Dataverse cloud-flow primitives', () => {
     expect(result.ok).toBe(true);
     expect(result.flows).toEqual([
       expect.objectContaining({ name: 'Oddy flow', state: 'draft', oddyEditable: true }),
-      expect.objectContaining({ name: 'Existing flow', state: 'activated', oddyEditable: false })
+      expect.objectContaining({ name: 'Existing flow', state: 'activated', oddyEditable: true })
     ]);
     expect(JSON.stringify(result)).not.toContain('clientdata');
   });
@@ -205,9 +205,9 @@ describe('Dataverse cloud-flow primitives', () => {
     });
 
     expect(prepared.ok).toBe(true);
-    expect(prepared.flowChange?.after.actions[0]).toEqual(
-      expect.objectContaining({ table: 'accounts', selectColumns: ['name'] })
-    );
+    expect(prepared.flowChange?.after).toMatchObject({
+      actions: [expect.objectContaining({ table: 'accounts', selectColumns: ['name'] })]
+    });
     expect(prepared.flowChange?.warnings.join(' ')).toContain('remain Off');
 
     const applied = await executeDataverseFlowPrimitive({
@@ -308,8 +308,10 @@ describe('Dataverse cloud-flow primitives', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.flowChange?.after.trigger).toMatchObject({ table: 'contact' });
-    expect(result.flowChange?.after.actions[0]).toMatchObject({ table: 'contacts' });
+    expect(result.flowChange?.after).toMatchObject({
+      trigger: { table: 'contact' },
+      actions: [expect.objectContaining({ table: 'contacts' })]
+    });
     const clientdata = JSON.parse(result.flowChange!.generatedClientData);
     expect(
       clientdata.properties.definition.triggers.When_a_row_changes.inputs.parameters[

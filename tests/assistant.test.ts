@@ -18,6 +18,7 @@ import {
   skillProposal
 } from './fixtures/proposals';
 import { bulkSummary } from './fixtures/bulk';
+import { definitionProposal } from './fixtures/flow-definitions';
 
 vi.mock('../lib/azure-openai', () => ({
   callAzureOpenAI: vi.fn(),
@@ -139,6 +140,38 @@ describe('assistant orchestration', () => {
     expect(JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[1]?.[1])).not.toContain(
       'generatedClientData'
     );
+  });
+
+  it('collects a general flow definition proposal for approval without executing it', async () => {
+    vi.mocked(callAzureOpenAIResponses)
+      .mockResolvedValueOnce({
+        id: 'general-1',
+        toolCalls: [
+          {
+            type: 'function_call',
+            call_id: 'flow',
+            name: 'prepare_dataverse_flow_change',
+            arguments: '{}'
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        id: 'general-2',
+        content: 'Review the proposed changes.',
+        toolCalls: []
+      });
+    vi.mocked(executeAssistantTool).mockResolvedValueOnce({
+      ok: true,
+      action: 'prepare_flow_change',
+      flowChange: definitionProposal
+    });
+    const result = await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, true);
+    expect(result.pendingFlowChanges).toEqual([definitionProposal]);
+    expect(executeAssistantTool).toHaveBeenCalledTimes(1);
+    expect(result.toolsUsed?.[0]?.summary).toContain('awaiting approval');
+    const output = JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[1]?.[1]);
+    expect(output).toContain('clientData');
+    expect(output).not.toContain('generatedClientData');
   });
 
   it('rejects unadvertised calls before dispatch, including approval execution', async () => {
