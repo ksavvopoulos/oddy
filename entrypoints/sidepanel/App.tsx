@@ -547,7 +547,7 @@ export function App() {
           <img className="brand-mark" src="/icons/oddy.svg" alt="" aria-hidden="true" />
           <div>
             <strong>Oddy</strong>
-            <span>Dataverse navigator</span>
+            <span>Dataverse Raven</span>
           </div>
         </div>
         <div className="topbar-actions">

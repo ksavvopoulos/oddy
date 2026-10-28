@@ -5,7 +5,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: 'Oddy',
-    description: 'An AI navigator for Microsoft Dataverse and model-driven apps.',
+    description: 'Your AI-powered Dataverse Raven for data, cloud flows, and changes you approve.',
     version: packageJson.version,
     minimum_chrome_version: '116',
     permissions: ['storage', 'sidePanel', 'tabs', 'scripting'],

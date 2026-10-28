@@ -232,7 +232,7 @@ export function App() {
       <header className="hero">
         <img className="brand-mark" src="/icons/oddy.svg" alt="" aria-hidden="true" />
         <div>
-          <p className="eyebrow">Oddy</p>
+          <p className="eyebrow">Oddy · Dataverse Raven</p>
           <h1>Extension settings</h1>
           <p>Connect an Azure OpenAI deployment and choose what record data may be included.</p>
         </div>

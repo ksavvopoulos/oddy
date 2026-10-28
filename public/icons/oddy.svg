@@ -1,20 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Oddy crow logo">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Oddy — Dataverse Raven</title>
+  <desc id="description">A front-facing curious dark raven with a strong curved beak, shaggy throat feathers, two expressive eyes, and a teal sheen on a mint background.</desc>
   <defs>
-    <linearGradient id="sky" x1="70" y1="35" x2="448" y2="476" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#83E3D2"/>
-      <stop offset="1" stop-color="#8DBBFF"/>
-    </linearGradient>
+    <g id="wing">
+      <path d="M165 258C129 270 105 311 119 354C130 380 157 396 185 394C165 364 171 326 185 293Z" fill="#455B78" stroke="#1D243C" stroke-width="7" stroke-linejoin="round"/>
+      <path d="M151 291C133 309 130 332 143 352L148 337L160 362L165 339L176 351L171 313Z" fill="#679CA7"/>
+      <path d="M143 306Q139 320 143 331" fill="none" stroke="#9ACDD0" stroke-width="6" stroke-linecap="round"/>
+    </g>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
-  <circle cx="397" cy="112" r="58" fill="#FFE073"/>
-  <path d="M173 343 74 405l119-25-59 77 112-70Z" fill="#3C356F"/>
-  <path d="M190 273c28-67 96-101 157-72 67 32 78 118 31 178-51 65-161 73-215 12-33-37-19-82 27-118Z" fill="#433A78"/>
-  <path d="M254 186c25-62 96-89 151-54 33 21 49 55 43 91l-4 25-92 29-91-26c-17-18-19-40-7-65Z" fill="#433A78"/>
-  <path d="M399 184c38 4 76 20 107 43l-86 31-42-30Z" fill="#433A78"/>
-  <path d="m420 241 86-14-76 39-29-20Z" fill="#FF8A62"/>
-  <path d="M197 319c39-59 114-77 168-35-4 44-26 83-63 106l-38 31 2-35-48 29 15-39-48 9 28-34c-25-1-28-14-16-32Z" fill="#7567D8"/>
-  <path d="M241 326c35-22 76-28 112-14-17 28-43 49-77 61l8-22-35 14 12-23-31 5Z" fill="#8EDAF1" opacity=".8"/>
-  <circle cx="371" cy="190" r="22" fill="#FFF9E8"/>
-  <circle cx="378" cy="190" r="10" fill="#292653"/>
-  <circle cx="382" cy="186" r="3.5" fill="#FFFFFF"/>
+  <rect width="512" height="512" rx="112" fill="#8EDDD0"/>
+  <path d="M224 386L218 445L256 426L294 445L288 386Z" fill="#252A43" stroke="#1D243C" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M207 389L206 423M190 435L206 422L221 435M305 389L306 423M291 435L306 422L322 435" fill="none" stroke="#252A43" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M154 249C121 289 127 360 167 394C206 426 307 426 346 393C385 361 390 290 357 250Z" fill="#30344F" stroke="#1D243C" stroke-width="8" stroke-linejoin="round"/>
+  <use href="#wing"/>
+  <use href="#wing" transform="translate(512 0) scale(-1 1)"/>
+  <path d="M140 234C121 205 123 160 144 126C166 91 199 77 256 78C313 76 351 87 370 126C391 159 392 205 373 234L385 257L360 250L370 275L342 262L349 286L321 272L310 292L283 275L256 290L229 275L202 292L191 272L163 286L170 262L142 275L152 250L127 257Z" fill="#30344F" stroke="#1D243C" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M155 147C173 112 204 96 232 101" fill="none" stroke="#65778F" stroke-width="11" stroke-linecap="round"/>
+  <path d="M149 167L148 175" fill="none" stroke="#65778F" stroke-width="8" stroke-linecap="round"/>
+  <path d="M164 160Q189 148 215 160M297 157Q322 145 348 160" fill="none" stroke="#7C91A4" stroke-width="8" stroke-linecap="round"/>
+  <path d="M164 190C172 169 205 170 224 187C215 211 179 216 164 190Z" fill="#FFF1B8" stroke="#1D243C" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M348 190C340 169 307 170 288 187C297 211 333 216 348 190Z" fill="#FFF1B8" stroke="#1D243C" stroke-width="6" stroke-linejoin="round"/>
+  <circle cx="196" cy="190" r="11" fill="#1D243C"/>
+  <circle cx="316" cy="190" r="11" fill="#1D243C"/>
+  <circle cx="192" cy="185" r="4" fill="#FFFFFF"/>
+  <circle cx="312" cy="185" r="4" fill="#FFFFFF"/>
+  <path d="M232 307Q256 320 280 307L270 328L260 322L256 339L249 321L237 328Z" fill="#455B78"/>
+  <path d="M229 207C238 191 272 191 283 207L292 235C287 257 272 277 256 291C241 277 225 257 220 235Z" fill="#263747" stroke="#1D243C" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M230 219L255 202L255 265Z" fill="#47626F"/>
+  <path d="M256 208L256 234" fill="none" stroke="#60828B" stroke-width="6" stroke-linecap="round"/>
+  <path d="M225 237Q256 248 287 237" fill="none" stroke="#131D32" stroke-width="5" stroke-linecap="round"/>
+  <ellipse cx="240" cy="218" rx="4" ry="3" fill="#131D32"/>
+  <ellipse cx="272" cy="218" rx="4" ry="3" fill="#131D32"/>
+  <path d="M404 82L410 99L427 105L410 111L404 128L398 111L381 105L398 99Z" fill="#FFF1B8"/>
 </svg>

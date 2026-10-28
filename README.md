@@ -1,6 +1,10 @@
 # Oddy
 
-Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsoft Dataverse/model-driven app context and sends user-approved context to an Azure OpenAI deployment.
+![Oddy the raven](public/icons/128.png)
+
+**Your Dataverse Raven.**
+
+Oddy is a Chrome Manifest V3 side-panel assistant for Dataverse data and Power Automate flows. It reads the active Dataverse/model-driven app context, sends user-approved context to Azure OpenAI, and keeps you in control of changes.
 
 ## MVP features
 
@@ -47,6 +51,8 @@ Requirements: Node.js 22 recommended (20 also supported) and Chrome 116+.
 npm install
 npm run dev
 ```
+
+The raven mascot lives in `public/icons/oddy.svg`, shared by the side panel, settings, and favicon. After editing it, run `npm run icons` to regenerate all Chrome PNG icons. `npm run icons:check` and the branding tests verify that the PNGs match the vector source.
 
 For a production build:
 
