@@ -34,7 +34,7 @@ export async function openDataverseFlowDesigner(
   }
 
   const url = new URL(
-    `/environments/${encodeURIComponent(target.flowDesignerTarget.environmentId)}/flows/${encodeURIComponent(target.flowDesignerTarget.workflowId)}/edit`,
+    `/environments/${encodeURIComponent(target.flowDesignerTarget.environmentId)}/flows/${encodeURIComponent(target.flowDesignerTarget.workflowId)}`,
     'https://make.powerautomate.com'
   ).toString();
   await chrome.tabs.create({ url });

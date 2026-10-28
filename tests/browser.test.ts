@@ -65,7 +65,7 @@ describe('browser boundary', () => {
     expect(executeScript).not.toHaveBeenCalled();
   });
 
-  it('opens an exact flow in a new Power Automate designer tab', async () => {
+  it('opens an exact flow in a new Power Automate tab without an /edit suffix', async () => {
     const create = vi.fn();
     const executeScript = vi.fn(async () => [
       {
@@ -90,7 +90,7 @@ describe('browser boundary', () => {
     const result = await openDataverseFlowDesigner(context, '00000000-0000-0000-0000-000000000010');
     expect(result.ok).toBe(true);
     expect(create).toHaveBeenCalledWith({
-      url: 'https://make.powerautomate.com/environments/Default-00000000-0000-0000-0000-000000000001/flows/00000000-0000-0000-0000-000000000010/edit'
+      url: 'https://make.powerautomate.com/environments/Default-00000000-0000-0000-0000-000000000001/flows/00000000-0000-0000-0000-000000000010'
     });
   });
 
