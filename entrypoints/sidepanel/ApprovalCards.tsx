@@ -136,7 +136,11 @@ export function FlowChangeCards({ item, approvals }: Props) {
                 <div className="mutation-heading">
                   <div>
                     <strong>
-                      {change.operation === 'create' ? 'Create' : 'Update'} cloud flow
+                      {change.operation === 'create'
+                        ? 'Create cloud flow'
+                        : change.saveMode === 'draft'
+                          ? 'Save cloud-flow draft'
+                          : 'Update cloud flow'}
                     </strong>
                     <small>{change.after.name}</small>
                   </div>
@@ -184,15 +188,17 @@ export function FlowChangeCards({ item, approvals }: Props) {
                 <p className="mutation-note">
                   {item.historical
                     ? 'This historical flow preview cannot be applied. Prepare a fresh preview to continue.'
-                    : 'Oddy will write only this validated flow definition. Connection credentials are not changed.'}
+                    : change.saveMode === 'draft'
+                      ? 'Only an unpublished draft will be saved. Publishing and activation require a separate step. Connection credentials are not changed.'
+                      : 'Oddy will write only this validated flow definition. Connection credentials are not changed.'}
                 </p>
                 {approval.error && <p className="mutation-error">{approval.error}</p>}
                 {approval.status === 'approved' && approval.result && (
                   <>
                     <p className="mutation-success">
-                      {approval.result.name} was{' '}
-                      {approval.result.operation === 'create' ? 'created' : 'updated'} and is{' '}
-                      {approval.result.state}.
+                      {approval.result.savedAs === 'unpublished-draft'
+                        ? `${approval.result.name}: unpublished draft saved. Not published or activated; runtime state remains ${approval.result.state}.`
+                        : `${approval.result.name} was ${approval.result.operation === 'create' ? 'created' : 'updated'} and is ${approval.result.state}.`}
                     </p>
                     <div className="mutation-actions">
                       <button
@@ -227,7 +233,9 @@ export function FlowChangeCards({ item, approvals }: Props) {
                       className="mutation-approve"
                       onClick={() => void approveFlowChange(change)}
                     >
-                      Approve {change.operation}
+                      {change.saveMode === 'draft'
+                        ? 'Approve draft save'
+                        : `Approve ${change.operation}`}
                     </button>
                   </div>
                 )}

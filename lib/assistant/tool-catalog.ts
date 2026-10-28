@@ -424,7 +424,7 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'prepare_dataverse_flow_change',
       description:
-        'Prepare, but never execute, a typed Dataverse-only cloud-flow create or update. For updates, read the exact flow first and submit its complete revised specification. V1 supports manual or Dataverse row triggers and sequential list/get/add/update row actions with scalar text, number, boolean, date, GUID, trigger-column, or earlier single-row output values. Choice, lookup, collection-to-scalar, and arbitrary expression writes are rejected. New flows are created Off in the default solution. Only Oddy-created unmanaged flows can be edited.',
+        'Prepare, but never execute, a typed Dataverse-only cloud-flow create or update. For updates, read the exact flow first and submit its complete revised specification. V1 supports manual or Dataverse row triggers and sequential list/get/add/update row actions with scalar text, number, boolean, date, GUID, trigger-column, or earlier single-row output values. Choice, lookup, collection-to-scalar, and arbitrary expression writes are rejected. New flows are created Off in the default solution. Updates save an unpublished draft only and never publish or activate the flow; publishing remains a separate Power Automate step. Only Oddy-created unmanaged flows can be edited.',
       parameters: {
         type: 'object',
         additionalProperties: false,

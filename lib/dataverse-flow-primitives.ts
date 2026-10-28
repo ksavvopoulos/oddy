@@ -35,6 +35,7 @@ export async function executeDataverseFlowPrimitive(
     name?: string;
     description?: string;
     statecode?: number;
+    componentstate?: number;
     category?: number;
     type?: number;
     ismanaged?: boolean;
@@ -72,8 +73,11 @@ export async function executeDataverseFlowPrimitive(
     const detail = (await response.text()).slice(0, 700);
     return `${response.status} ${response.statusText}${detail ? `: ${detail}` : ''}`;
   };
-  const getJson = async <T>(url: string): Promise<T> => {
-    const response = await fetch(url, { credentials: 'include', headers });
+  const getJson = async <T>(url: string, includeUnpublished = false): Promise<T> => {
+    const response = await fetch(url, {
+      credentials: 'include',
+      headers: includeUnpublished ? { ...headers, 'MSCRM.IncludeUnpublished': 'true' } : headers
+    });
     if (!response.ok) throw new Error(await errorText(response));
     return (await response.json()) as T;
   };
@@ -342,6 +346,7 @@ export async function executeDataverseFlowPrimitive(
         isManaged,
         modifiedOn: record.modifiedon,
         oddyEditable: Boolean(spec) && definitionMatches && !isManaged,
+        componentState: record.componentstate,
         etag: record['@odata.etag'],
         spec,
         warnings: isManaged
@@ -360,14 +365,15 @@ export async function executeDataverseFlowPrimitive(
       if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('The workflow ID is invalid.');
       const url =
         `${request.origin}/api/data/v9.2/workflows(${id})?` +
-        '$select=workflowid,name,description,statecode,category,type,ismanaged,modifiedon,clientdata';
-      return flowDetail(await getJson<WorkflowRecord>(url));
+        '$select=workflowid,name,description,statecode,componentstate,category,type,ismanaged,modifiedon,clientdata';
+      // Read the latest saved definition, not an older published version hidden beneath a draft.
+      return flowDetail(await getJson<WorkflowRecord>(url, true));
     };
     const listFlows = async () => {
       const url = new URL(`${request.origin}/api/data/v9.2/workflows`);
       url.searchParams.set(
         '$select',
-        'workflowid,name,description,statecode,category,type,ismanaged,modifiedon,clientdata'
+        'workflowid,name,description,statecode,componentstate,category,type,ismanaged,modifiedon,clientdata'
       );
       url.searchParams.set('$filter', 'category eq 5 and type eq 1');
       url.searchParams.set('$orderby', 'modifiedon desc');
@@ -375,7 +381,7 @@ export async function executeDataverseFlowPrimitive(
         '$top',
         String(Math.min(Math.max(request.action === 'list_flows' ? request.top || 20 : 20, 1), 50))
       );
-      const payload = await getJson<{ value?: WorkflowRecord[] }>(url.toString());
+      const payload = await getJson<{ value?: WorkflowRecord[] }>(url.toString(), true);
       return (payload.value || [])
         .map(flowDetail)
         .map(({ etag: _etag, spec: _spec, warnings: _warnings, ...summary }) => summary);
@@ -823,6 +829,11 @@ export async function executeDataverseFlowPrimitive(
           'This flow was not created by Oddy, so its definition cannot yet be edited safely. Oddy can still inspect it.'
         );
       }
+      if (before && (!before.etag || before.etag === '*')) {
+        throw new Error(
+          'Dataverse did not return a row version for the flow draft. A safe update cannot be prepared.'
+        );
+      }
       const generatedClientData = compileClientData(after);
       const warnings =
         request.operation === 'create'
@@ -830,9 +841,10 @@ export async function executeDataverseFlowPrimitive(
               'The flow will be created in the environment default solution.',
               'The new flow will remain Off until it is activated separately.'
             ]
-          : before?.state === 'activated'
-            ? ['This is an active flow. The approved definition will take effect for future runs.']
-            : [];
+          : [
+              'This approval saves an unpublished draft only. It does not publish, activate, or change the running flow.',
+              'Review and publish the saved draft separately in Power Automate when ready.'
+            ];
       return {
         ok: true,
         action: request.action,
@@ -845,6 +857,7 @@ export async function executeDataverseFlowPrimitive(
           before,
           after,
           generatedClientData,
+          ...(request.operation === 'update' ? { saveMode: 'draft' as const } : {}),
           warnings
         }
       };
@@ -853,6 +866,11 @@ export async function executeDataverseFlowPrimitive(
       const change = request.change;
       if (change.environmentOrigin !== request.origin) {
         throw new Error('The approved flow preview belongs to a different Dataverse environment.');
+      }
+      if (change.operation === 'update' && change.saveMode !== 'draft') {
+        throw new Error(
+          'This older flow preview does not authorize a draft save. Prepare a fresh preview.'
+        );
       }
       const normalized = await normalizeSpec(change.after);
       const generatedClientData = compileClientData(normalized);
@@ -890,13 +908,20 @@ export async function executeDataverseFlowPrimitive(
           }
         };
       }
-      if (!change.workflowId || !change.etag) {
+      if (!change.workflowId || !change.etag || change.etag === '*') {
         throw new Error('The update preview is missing its workflow ID or row version.');
       }
       const current = await getFlow(change.workflowId);
       if (current.isManaged)
         throw new Error('The flow became managed and can no longer be edited.');
-      if (current.etag !== change.etag) {
+      if (!current.oddyEditable)
+        throw new Error(
+          'The current flow draft is no longer safely editable by Oddy. Prepare a fresh preview.'
+        );
+      if (
+        current.etag !== change.etag ||
+        current.componentState !== change.before?.componentState
+      ) {
         throw new Error(
           'The flow changed after this preview was prepared. Prepare a fresh preview.'
         );
@@ -906,7 +931,8 @@ export async function executeDataverseFlowPrimitive(
         {
           method: 'PATCH',
           credentials: 'include',
-          headers: { ...headers, 'If-Match': change.etag },
+          // No publish call, activation, SkipComponentVersioning, wildcard ETag, or retry fallback.
+          headers: { ...headers, 'If-Match': change.etag, 'MSCRM.AsUnpublished': 'true' },
           body: JSON.stringify({
             name: normalized.name,
             description: normalized.description || null,
@@ -922,7 +948,8 @@ export async function executeDataverseFlowPrimitive(
           operation: 'update',
           workflowId: change.workflowId,
           name: normalized.name,
-          state: current.state
+          state: current.state,
+          savedAs: 'unpublished-draft'
         }
       };
     }

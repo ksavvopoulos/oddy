@@ -66,7 +66,9 @@ model: typed graph → metadata/connection validation → compiled definition
 page: revalidate graph + connection + environment → ETag check → POST/PATCH workflow
 ```
 
-Creation uses documented modern-flow fields (`category=5`, `type=1`, `primaryentity=none`) and leaves the new flow Draft/Off. Updates are limited to unmanaged flows carrying Oddy's typed marker; arbitrary existing `clientdata`, managed flows, and unknown graph shapes are inspection-only. Approved updates re-read the workflow and require the exact prepared ETag before `PATCH`. Activation is intentionally separate future authority and is never bundled into a definition create/edit.
+Creation uses documented modern-flow fields (`category=5`, `type=1`, `primaryentity=none`) and leaves the new flow Draft/Off. Updates are limited to unmanaged flows carrying Oddy's typed marker; arbitrary existing `clientdata`, managed flows, and unknown graph shapes are inspection-only. Workflow reads use `MSCRM.IncludeUnpublished: true` to select the latest saved draft rather than a stale published definition. Update preparation requires a row version and discloses `saveMode: draft`. Execution rejects legacy previews without that consent, re-reads the latest workflow, checks editability, component state and exact ETag, then sends one `PATCH` with `MSCRM.AsUnpublished: true`. It never sends `SkipComponentVersioning`, wildcard ETags, publish/activate calls, or a fallback published update. Runtime `statecode` and solution `componentstate` are distinct; success audits report an unpublished draft saved, not a published/running change. Publication and activation are separate future authorities.
+
+`AsUnpublished` has limited public documentation; the draft request is based on observed maker/API integrations, not a documented general-purpose guarantee. Live development-tenant verification must check draft contents, version history, unchanged published definition/runtime state and stale-ETag rejection. Rejected draft requests stop without retries. Reference: [draft-save request example](https://www.skillsdirectory.com/skills/hydr-cloud-flows), [Microsoft's IncludeUnpublished example for workflow reads](https://learn.microsoft.com/en-us/power-automate/developer/desktop-flow-public-apis).
 
 ## Bulk jobs: data plane versus model context
 
@@ -174,7 +176,7 @@ npm run check
 Tests are divided by boundary:
 
 - `dataverse-tools.test.ts`: signed-session API request/response behavior, including Choice, lookup, bulk action, and XML metadata headers.
-- `dataverse-flow-tools.test.ts`: modern-flow listing, typed compilation, approval-only creation, connection references, and stale ETag rejection.
+- `dataverse-flow-tools.test.ts`: modern-flow listing, typed compilation, approval-only creation, unpublished reads, explicit draft-save headers/consent, no publish/retry fallback, connection references, and stale ETag rejection.
 - `assistant.test.ts`: tool selection, allowlist rejection, proposal collection, continuation, and loop limits using mocked provider/browser seams.
 - `tool-dispatch.test.ts`: argument parsing and preparation-only routing.
 - `approvals.test.ts`: lifecycle rules, duplicate execution, failures, and history guards without React.
@@ -200,7 +202,7 @@ No test needs live credentials or a Dataverse tenant. That also means tests do *
 
 1. Load `.output/chrome-mv3`, open a Dataverse app, and verify context detection.
 2. Query records, create/update `AI Result`, and navigate to a record.
-3. List flow connection references, prepare a manual Dataverse list-rows flow, inspect its full typed approval card, approve it, and verify it is created Off. Ask Oddy to show it in Power Automate and verify the exact designer opens in a new tab. Read it back, prepare a rename, alter it externally before approval, and verify the stale update is refused.
+3. List flow connection references, prepare a manual Dataverse list-rows flow, inspect its full typed approval card, approve it, and verify it is created Off. Ask Oddy to show it in Power Automate and verify the exact designer opens in a new tab. Read it back, prepare a rename, alter it externally before approval, and verify the stale update is refused. Prepare a fresh update while an unpublished draft exists; approve the draft save and verify the latest draft changes without a publish/activation. Repeat for an active flow in a development tenant, verifying the previously published definition and runtime state remain unchanged.
 4. Prepare a record change; deselect/reselect fields; reject it. Prepare another and approve it.
 5. Ask to create a static marketing list and add contacts created in the last 30 days. Approve creation; Oddy should automatically use the saved list ID and prepare the matching members. Approve membership separately and verify bounded `AddListMembersList` chunks for the frozen matching selection, never per-contact writes. Check dynamic-list rejection.
 6. Trigger an execution failure and confirm the next assistant turn receives the exact audit error and requires a fresh preview.

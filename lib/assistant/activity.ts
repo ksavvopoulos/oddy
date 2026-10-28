@@ -116,8 +116,14 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
     if (result.action === 'execute_flow_change') {
       return {
         name: toolName,
-        label: 'Applied approved cloud-flow change',
-        summary: `${result.flowChangeResult?.name || 'Cloud flow'} · ${result.flowChangeResult?.state || 'unknown'}`,
+        label:
+          result.flowChangeResult?.savedAs === 'unpublished-draft'
+            ? 'Saved approved cloud-flow draft'
+            : 'Applied approved cloud-flow change',
+        summary:
+          result.flowChangeResult?.savedAs === 'unpublished-draft'
+            ? `${result.flowChangeResult.name} · unpublished draft saved; not published or activated`
+            : `${result.flowChangeResult?.name || 'Cloud flow'} · ${result.flowChangeResult?.state || 'unknown'}`,
         details: result.flowChangeResult?.workflowId
       };
     }

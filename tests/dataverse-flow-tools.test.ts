@@ -369,6 +369,147 @@ describe('Dataverse cloud-flow primitives', () => {
     expect(result.error).toContain('unsupported flow-write type Lookup');
   });
 
+  it.each([0, 1])(
+    'saves only an unpublished draft with an exact ETag (runtime state %s)',
+    async (runtimeState) => {
+      const workflowId = '00000000-0000-0000-0000-000000000013';
+      const spec = {
+        name: 'Existing draft',
+        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+        trigger: { kind: 'manual' as const },
+        actions: []
+      };
+      const flow = {
+        workflowid: workflowId,
+        name: spec.name,
+        statecode: runtimeState,
+        componentstate: 1,
+        ismanaged: false,
+        clientdata: manualClientData(spec),
+        '@odata.etag': 'W/"draft-1"'
+      };
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(response(connectionReferences))
+        .mockResolvedValueOnce(response(flow))
+        .mockResolvedValueOnce(response(connectionReferences))
+        .mockResolvedValueOnce(response(flow))
+        .mockResolvedValueOnce(response(undefined, 204));
+      vi.stubGlobal('fetch', fetchMock);
+      const prepared = await executeDataverseFlowPrimitive({
+        action: 'prepare_flow_change',
+        origin,
+        operation: 'update',
+        workflowId,
+        spec: { ...spec, name: 'Fixed draft' }
+      });
+      expect(prepared.ok).toBe(true);
+      expect(prepared.flowChange?.saveMode).toBe('draft');
+      expect(prepared.flowChange?.before?.componentState).toBe(1);
+      expect(prepared.flowChange?.warnings.join(' ')).toContain('does not publish');
+      const result = await executeDataverseFlowPrimitive({
+        action: 'execute_flow_change',
+        origin,
+        change: prepared.flowChange!
+      });
+      expect(result.flowChangeResult).toMatchObject({
+        savedAs: 'unpublished-draft',
+        state: runtimeState === 1 ? 'activated' : 'draft'
+      });
+      for (const index of [1, 3]) {
+        const options = fetchMock.mock.calls[index]![1] as RequestInit;
+        expect(new Headers(options.headers).get('MSCRM.IncludeUnpublished')).toBe('true');
+      }
+      const patch = fetchMock.mock.calls[4]![1] as RequestInit;
+      expect(patch.method).toBe('PATCH');
+      expect(new Headers(patch.headers).get('MSCRM.AsUnpublished')).toBe('true');
+      expect(new Headers(patch.headers).get('If-Match')).toBe('W/"draft-1"');
+      expect(new Headers(patch.headers).has('MSCRM.SkipComponentVersioning')).toBe(false);
+      const body = JSON.parse(String(patch.body));
+      expect(Object.keys(body).sort()).toEqual(['clientdata', 'description', 'name']);
+      expect(body.name).toBe('Fixed draft');
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(fetchMock.mock.calls.some(([url]) => /Publish|Activate/.test(String(url)))).toBe(
+        false
+      );
+    }
+  );
+
+  it.each([
+    ['missing draft consent', 'legacy'],
+    ['managed draft', 'managed'],
+    ['unrecognized draft', 'unsupported'],
+    ['changed component state', 'component-change'],
+    ['server version conflict', 'conflict'],
+    ['server draft-save failure', 'draft-error']
+  ])('does not publish or retry after %s', async (_label, scenario) => {
+    const workflowId = '00000000-0000-0000-0000-000000000013';
+    const spec = {
+      name: 'Existing draft',
+      connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+      trigger: { kind: 'manual' as const },
+      actions: []
+    };
+    const flow = {
+      workflowid: workflowId,
+      name: spec.name,
+      statecode: 0,
+      componentstate: 1,
+      ismanaged: false,
+      clientdata: manualClientData(spec),
+      '@odata.etag': 'W/"1"'
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(response(flow));
+    vi.stubGlobal('fetch', fetchMock);
+    const prepared = await executeDataverseFlowPrimitive({
+      action: 'prepare_flow_change',
+      origin,
+      operation: 'update',
+      workflowId,
+      spec: { ...spec, name: 'Fixed draft' }
+    });
+    expect(prepared.ok).toBe(true);
+    fetchMock.mockClear();
+    fetchMock
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(
+        response({
+          ...flow,
+          ...(scenario === 'managed' ? { ismanaged: true } : {}),
+          ...(scenario === 'unsupported' ? { clientdata: '{}' } : {}),
+          ...(scenario === 'component-change' ? { componentstate: 0 } : {})
+        })
+      )
+      .mockResolvedValueOnce(
+        response(
+          {
+            error: {
+              message:
+                scenario === 'conflict' ? 'Precondition failed' : 'Unpublished context rejected'
+            }
+          },
+          scenario === 'conflict' ? 412 : 400
+        )
+      );
+    const change = { ...prepared.flowChange! };
+    if (scenario === 'legacy') delete change.saveMode;
+    const result = await executeDataverseFlowPrimitive({
+      action: 'execute_flow_change',
+      origin,
+      change
+    });
+    expect(result.ok).toBe(false);
+    const writes = fetchMock.mock.calls.filter(
+      ([, options]) => (options as RequestInit)?.method === 'PATCH'
+    );
+    expect(writes).toHaveLength(['conflict', 'draft-error'].includes(scenario) ? 1 : 0);
+    expect(fetchMock.mock.calls.some(([url]) => /Publish|Activate/.test(String(url)))).toBe(false);
+    if (scenario === 'legacy') expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('rejects a stale Oddy-created flow update', async () => {
     const workflowId = '00000000-0000-0000-0000-000000000013';
     const spec = {

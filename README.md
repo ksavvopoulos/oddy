@@ -102,6 +102,12 @@ Oddy manages modern cloud flows through the signed-in Dataverse `workflows` Web 
 
 The first version supports manual or Dataverse row create/update/delete triggers and sequential Dataverse list/get/add/update-row actions. Trigger definitions use Dataverse logical table names such as `contact`, while connector actions are compiled with the required entity-set names such as `contacts`. Oddy can resolve the current Power Platform environment through Dataverse and open an exact workflow ID directly in a new Power Automate designer tab. Creates go to the environment's default solution and remain **Off**. Updates require an exact workflow ID and ETag and are currently limited to unmanaged flows created by Oddy. Managed or unsupported existing definitions remain inspection-only.
 
+### Saving existing flow drafts
+
+Flow updates read the latest unpublished definition with `MSCRM.IncludeUnpublished: true` and save using `MSCRM.AsUnpublished: true` plus the exact captured ETag. The approval explicitly authorizes **Save cloud-flow draft**, not publication or activation. Existing published automation is not intentionally changed; publish separately in Power Automate after review. Older update previews must be prepared again. There is no automatic publish, activation, deletion of drafts, or fallback retry after a save failure.
+
+The draft-save header has limited public Microsoft documentation; validate it in a development tenant before relying on this path. Automated tests verify the request contract and approval boundaries, not server-side header behavior. If the tenant rejects the draft request, Oddy stops and reports the error rather than retrying a published update.
+
 ## Bulk workflows
 
 Example requests:

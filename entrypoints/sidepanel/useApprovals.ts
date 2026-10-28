@@ -218,8 +218,14 @@ export function useApprovals(options: {
     initial: () => ({ status: 'pending' }),
     request: (change) => ({ type: 'EXECUTE_DATAVERSE_FLOW_CHANGE', payload: { change } }),
     successActivity: (result) => ({
-      label: 'Applied approved cloud-flow change',
-      summary: `${result.name} was ${result.operation === 'create' ? 'created' : 'updated'} · ${result.state}`,
+      label:
+        result.savedAs === 'unpublished-draft'
+          ? 'Saved approved cloud-flow draft'
+          : 'Applied approved cloud-flow change',
+      summary:
+        result.savedAs === 'unpublished-draft'
+          ? `${result.name} · unpublished draft saved; not published or activated`
+          : `${result.name} was ${result.operation === 'create' ? 'created' : 'updated'} · ${result.state}`,
       details: JSON.stringify(result)
     }),
     failureLabel: 'Approved cloud-flow change failed',

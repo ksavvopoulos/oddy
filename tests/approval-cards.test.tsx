@@ -45,6 +45,35 @@ function approvalActions(): ApprovalActions {
   };
 }
 
+describe('Cloud-flow draft save disclosure', () => {
+  it('distinguishes saving a draft from publishing an active flow', () => {
+    const item = {
+      ...conversationFixture().transcript[1]!,
+      pendingFlowChanges: [
+        { ...flowProposal, operation: 'update' as const, saveMode: 'draft' as const }
+      ]
+    };
+    const approvals = approvalActions();
+    const pending = renderToStaticMarkup(createElement(FlowChangeCards, { item, approvals }));
+    expect(pending).toContain('Save cloud-flow draft');
+    expect(pending).toContain('Approve draft save');
+    expect(pending).toContain('Only an unpublished draft will be saved');
+    approvals.flowChangeApprovals[flowProposal.id] = {
+      status: 'approved',
+      result: {
+        operation: 'update',
+        workflowId: 'id',
+        name: flowProposal.after.name,
+        state: 'activated',
+        savedAs: 'unpublished-draft'
+      }
+    };
+    const saved = renderToStaticMarkup(createElement(FlowChangeCards, { item, approvals }));
+    expect(saved).toContain('unpublished draft saved. Not published or activated');
+    expect(saved).toContain('runtime state remains activated');
+  });
+});
+
 for (const Component of [
   RecordChangeCards,
   FlowChangeCards,

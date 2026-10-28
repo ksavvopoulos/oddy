@@ -90,6 +90,8 @@ export interface DataverseFlowSummary {
 }
 
 export interface DataverseFlowDetail extends DataverseFlowSummary {
+  /** Solution component state, distinct from runtime state (On/Off). */
+  componentState?: number;
   etag?: string;
   spec?: DataverseFlowSpec;
   warnings?: string[];
@@ -104,6 +106,8 @@ export interface PreparedDataverseFlowChange {
   before?: DataverseFlowDetail;
   after: DataverseFlowSpec;
   generatedClientData: string;
+  /** Required for new update approvals; older previews cannot authorize a draft save. */
+  saveMode?: 'draft';
   warnings: string[];
 }
 
@@ -118,6 +122,8 @@ export interface DataverseFlowChangeExecutionResult {
   workflowId: string;
   name: string;
   state: DataverseFlowState;
+  /** A definition save is not a publish or runtime activation. */
+  savedAs?: 'unpublished-draft';
 }
 
 export type DataverseFlowPrimitiveRequest =
