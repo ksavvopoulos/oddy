@@ -151,6 +151,61 @@ describe('Dataverse structured primitives', () => {
     expect(result.fetchXml).not.toContain('paging-cookie');
   });
 
+  it('preserves record string values longer than 2,000 characters', async () => {
+    const longValue = 'x'.repeat(2501);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            LogicalName: 'contact',
+            EntitySetName: 'contacts',
+            PrimaryIdAttribute: 'contactid',
+            PrimaryNameAttribute: 'fullname',
+            ObjectTypeCode: 2
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [
+              { LogicalName: 'contactid', IsValidForRead: true },
+              { LogicalName: 'fullname', IsValidForRead: true },
+              { LogicalName: 'description', IsValidForRead: true }
+            ]
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [
+              {
+                contactid: '00000000-0000-0000-0000-000000000001',
+                fullname: 'Long description contact',
+                description: longValue
+              }
+            ],
+            '@Microsoft.Dynamics.CRM.totalrecordcount': 1
+          }),
+          { status: 200 }
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeDataversePrimitive({
+      action: 'query_records',
+      origin: 'https://contoso.crm.dynamics.com',
+      query: { table: 'contact', columns: ['description'] }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.records?.[0]?.description).toBe(longValue);
+  });
+
   it('uses top without paging or total-count attributes for the newest scenario', async () => {
     const fetchMock = vi
       .fn()

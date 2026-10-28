@@ -115,9 +115,7 @@ export async function executeDataversePrimitive(
   const odataEscape = (value: string) => value.replace(/'/g, "''");
   const sanitize = (value: unknown, depth = 0): unknown => {
     if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
-    if (typeof value === 'string') {
-      return value.length > 2000 ? `${value.slice(0, 2000)}… [truncated]` : value;
-    }
+    if (typeof value === 'string') return value;
     if (depth > 2) return String(value);
     if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitize(item, depth + 1));
     if (typeof value === 'object') {
