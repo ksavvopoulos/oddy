@@ -29,6 +29,8 @@ export function contextFromUrl(url: string, title?: string): DataverseContext {
   const parsed = new URL(url);
   const params = parsed.searchParams;
   const hostnameParts = parsed.hostname.split('.');
+  const powerAutomate =
+    parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'make.powerautomate.com';
 
   return {
     isDataverse: isDataverseUrl(url),
@@ -36,13 +38,16 @@ export function contextFromUrl(url: string, title?: string): DataverseContext {
     origin: parsed.origin,
     environmentName: hostnameParts[0],
     appId: params.get('appid') || undefined,
-    pageType: params.get('pagetype') || undefined,
+    pageType: powerAutomate ? 'power-automate' : params.get('pagetype') || undefined,
     tableLogicalName: params.get('etn') || undefined,
     recordId: normalizeRecordId(params.get('id')),
     title,
     url,
     fields: [],
-    capturedAt: new Date().toISOString()
+    capturedAt: new Date().toISOString(),
+    warning: powerAutomate
+      ? 'Power Automate is open. Return to the Dataverse tab to use data and flow tools. Your conversation stays open here.'
+      : undefined
   };
 }
 

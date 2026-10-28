@@ -1,5 +1,4 @@
 import { callAzureOpenAI } from '../lib/azure-openai';
-import { isDataverseUrl } from '../lib/dataverse-context';
 import { runDataverseAssistant } from '../lib/assistant/run';
 import { getActiveDataverseContext } from '../lib/browser/context';
 import { activeBulkEngine } from '../lib/browser/bulk';
@@ -18,36 +17,10 @@ import type { ExtensionMessage, MessageResult } from '../lib/types';
 
 export default defineBackground(() => {
   chrome.runtime.onInstalled.addListener(() => {
-    void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    void configureAllSidePanels();
+    void configureSidePanel();
   });
 
-  void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-  void configureAllSidePanels();
-
-  chrome.tabs.onCreated.addListener((tab) => {
-    void configureSidePanelForTab(tab);
-  });
-  chrome.tabs.onActivated.addListener(({ tabId }) => {
-    void chrome.tabs
-      .get(tabId)
-      .then((tab) => configureSidePanelForTab(tab))
-      .catch(() => undefined);
-  });
-  chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
-    if (changeInfo.url || changeInfo.status === 'complete') {
-      void configureSidePanelForTab(tab);
-    }
-  });
-  chrome.windows.onFocusChanged.addListener((windowId) => {
-    if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-    void chrome.tabs
-      .query({ active: true, windowId })
-      .then(([tab]) => {
-        if (tab) return configureSidePanelForTab(tab);
-      })
-      .catch(() => undefined);
-  });
+  void configureSidePanel();
 
   chrome.runtime.onMessage.addListener(
     (
@@ -63,19 +36,10 @@ export default defineBackground(() => {
   );
 });
 
-async function configureAllSidePanels(): Promise<void> {
-  const tabs = await chrome.tabs.query({});
-  await Promise.allSettled(tabs.map((tab) => configureSidePanelForTab(tab)));
-}
-
-async function configureSidePanelForTab(tab: chrome.tabs.Tab): Promise<void> {
-  if (!tab.id) return;
-  const enabled = Boolean(tab.url && isDataverseUrl(tab.url));
-  await chrome.sidePanel.setOptions({
-    tabId: tab.id,
-    path: 'sidepanel.html',
-    enabled
-  });
+async function configureSidePanel(): Promise<void> {
+  // Omitting tabId uses one global panel per window, not a fresh instance per tab.
+  await chrome.sidePanel.setOptions({ path: 'sidepanel.html', enabled: true });
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 }
 
 async function handleMessage(message: ExtensionMessage): Promise<MessageResult<unknown>> {
@@ -160,7 +124,10 @@ async function handleMessage(message: ExtensionMessage): Promise<MessageResult<u
       return { ok: true, data: await engine.stop(id, message.payload.reject) };
     }
     case 'GET_ACTIVE_CONTEXT':
-      return { ok: true, data: await getActiveDataverseContext() };
+      return {
+        ok: true,
+        data: await getActiveDataverseContext({ windowId: message.payload?.windowId })
+      };
 
     case 'LLM_CHAT': {
       const settings = await getSettings();

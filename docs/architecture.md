@@ -6,6 +6,14 @@ Oddy is a Manifest V3 extension with three execution environments. Keep their bo
 2. **Background worker**: receives messages, calls Azure OpenAI, selects tools, and coordinates browser operations.
 3. **Dataverse page MAIN world**: uses the signed-in browser session. No extension APIs or imported runtime helpers are available here.
 
+## Shared panel and active-tab context
+
+The background configures the default `sidepanel.html` without `tabId`, creating one global panel per browser window. It must not set the same path per tab: Chrome creates separate instances even when paths match, which previously lost the visible conversation when a flow opened in Power Automate. See [Chrome's PanelOptions instance semantics](https://developer.chrome.com/docs/extensions/reference/api/sidePanel#type-PanelOptions).
+
+The mounted panel listens to activation, active-tab URL/status updates, and focus events for its own window. Context requests carry that window ID. Each refresh immediately clears the previous context/fields and invalidates older replies. Missing tabs/URLs and uncommitted `pendingUrl` pages return a non-executable passive context; no scripts run there. Power Automate is recognized only for guidance, never as Dataverse. Data approvals and tool consent are gated by the current Dataverse context, but local custom-skill approvals remain separate. Background origin checks still apply; normal context-enabled model requests also carry the expected Dataverse origin. No new host permissions or background-tab write routing are introduced.
+
+The shared instance preserves in-flight responses and approval state across ordinary tab switches. Conversation history metadata is captured from explicit Dataverse requests or loaded history, so merely viewing a designer cannot relabel the saved environment. Closing/reloading the panel still uses the existing optional historical-restoration lifecycle, not a live-session replay.
+
 ## Module map
 
 | Area                           | Files                                                                               | Responsibility                                                                                                                                   |
@@ -195,7 +203,9 @@ Tests are divided by boundary:
 - `browser.test.ts` also verifies that user settings survive form-field early returns, list-page context, and record Web API fallback.
 - `conversation-model.test.ts`: backward-compatible restoration and authoritative outcome serialization.
 - `conversations.test.ts`: real IndexedDB API semantics via `fake-indexeddb`, atomic save/retention, CRUD, and policy decisions.
-- `browser.test.ts`: origin checks, injection contract, serialization safety, and navigation matching.
+- `browser.test.ts`: origin checks, injection contract, serialization safety, navigation matching, and passive missing/pending/Power Automate contexts.
+- `sidepanel-background.test.ts`: global-only panel configuration and window-scoped passive context reads.
+- `sidepanel-navigation.test.tsx`: shared live conversations/in-flight responses, data-approval gating, return-to-Dataverse recovery, stale context replies, window isolation, listener cleanup, and stable history attribution.
 
 No test needs live credentials or a Dataverse tenant. That also means tests do **not** replace a live-tenant smoke test.
 

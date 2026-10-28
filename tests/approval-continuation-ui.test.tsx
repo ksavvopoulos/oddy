@@ -52,6 +52,14 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.stubGlobal('chrome', {
     runtime: { onMessage: { addListener: vi.fn(), removeListener: vi.fn() } },
+    tabs: {
+      onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
+      onUpdated: { addListener: vi.fn(), removeListener: vi.fn() }
+    },
+    windows: {
+      getCurrent: vi.fn().mockResolvedValue({ id: 1 }),
+      onFocusChanged: { addListener: vi.fn(), removeListener: vi.fn() }
+    },
     storage: { onChanged: { addListener: vi.fn(), removeListener: vi.fn() } }
   });
   vi.mocked(getSettings).mockResolvedValue({

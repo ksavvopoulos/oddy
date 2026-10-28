@@ -23,6 +23,7 @@ function approvalActions(): ApprovalActions {
     toggleBulkReadableScope: vi.fn(),
     bulkProgress: {},
     allowBulkWrites: true,
+    allowDataverseWrites: true,
     mutationApprovals: conversation.mutationApprovals,
     flowChangeApprovals: { [flowProposal.id]: { status: 'pending' } },
     listMembershipApprovals: conversation.listMembershipApprovals,

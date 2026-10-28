@@ -20,7 +20,7 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 - Resolves table and column display names to logical metadata at runtime, including valid target tables for lookup columns
 - Composes multi-step workflows such as finding a named contact, discovering its invoice relationship, creating `AI Result`, navigating to it, and opening its first sorted record
 - Can navigate the active tab to a general list, personal/system view, or specific record
-- Enables the side panel only for Dataverse tabs and disables it on other sites
+- Keeps one shared side panel per browser window so chats survive tab switches, including opening Power Automate; Dataverse tools remain restricted to active Dataverse pages
 - Sends messages with Enter and inserts a new line with Shift+Enter
 - Requires field-level previews for single-record changes and frozen-scope previews for bulk jobs, followed by explicit approval before writes
 - Supports query-backed bulk updates, related-record counts (including zero), uploaded-dataset creates, and static marketing-list membership across thousands of records
@@ -95,6 +95,12 @@ Tool-enabled prompts use the Azure OpenAI Responses API so reasoning models can 
 ```text
 /openai/v1/responses
 ```
+
+## Switching browser tabs
+
+Oddy's conversation stays open when you move between tabs in the same window. On Power Automate, the panel explains that data/flow tools require returning to the Dataverse tab; it does not treat the designer as a Dataverse page or silently use another tab for writes. Pending data approvals are unavailable until a Dataverse page is active again. General conversation and local custom-skill management remain available without Dataverse context. No Power Automate scripting permission is required.
+
+A tab that is still opening or has no readable URL produces a passive context notice, not a missing-tab error. Context reads are scoped to the panel's own browser window, and stale replies cannot reactivate tools for a previous tab. Local history remains associated with the Dataverse request, not the designer opened afterward. Closing/reloading the panel can still end the live session; optional conversation history provides read-only restoration, not automatic execution.
 
 ## Cloud-flow workflows
 

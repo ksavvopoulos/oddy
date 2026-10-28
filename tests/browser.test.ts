@@ -156,6 +156,42 @@ describe('browser boundary', () => {
   });
 });
 
+describe('passive page context outside Dataverse', () => {
+  it.each([
+    [],
+    [{ id: 2 }],
+    [{ id: 2, pendingUrl: 'https://make.powerautomate.com/environments/env/flows/flow' }],
+    [{ id: 2, pendingUrl: `${origin}/main.aspx` }]
+  ])(
+    'handles an unavailable or uncommitted active tab without stale tools (%#)',
+    async (...tabs) => {
+      const executeScript = vi.fn();
+      vi.stubGlobal('chrome', { tabs: { query: async () => tabs }, scripting: { executeScript } });
+      const result = await getActiveDataverseContext();
+      expect(result.isDataverse).toBe(false);
+      expect(result.fields).toEqual([]);
+      expect(result.warning).toBeTruthy();
+      expect(executeScript).not.toHaveBeenCalled();
+    }
+  );
+
+  it('recognizes Power Automate without injecting Dataverse scripts or settings reads', async () => {
+    const executeScript = vi.fn();
+    vi.stubGlobal('chrome', {
+      tabs: {
+        query: async () => [
+          { id: 2, url: 'https://make.powerautomate.com/environments/env/flows/flow' }
+        ]
+      },
+      scripting: { executeScript }
+    });
+    const result = await getActiveDataverseContext();
+    expect(result).toMatchObject({ isDataverse: false, pageType: 'power-automate', fields: [] });
+    expect(result.warning).toContain('Return to the Dataverse tab');
+    expect(executeScript).not.toHaveBeenCalled();
+  });
+});
+
 describe('current user context wiring', () => {
   const currentUser = {
     source: 'webApi',

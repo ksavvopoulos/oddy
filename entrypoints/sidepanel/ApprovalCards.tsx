@@ -21,7 +21,10 @@ export function RecordChangeCards({ item, approvals }: Props) {
               selectedColumns: mutation.fields.map((field) => field.logicalName),
               status: 'pending' as const
             };
-            const editable = !approvals.blocked && canEditApproval(approval, item.historical);
+            const editable =
+              !approvals.blocked &&
+              approvals.allowDataverseWrites &&
+              canEditApproval(approval, item.historical);
             return (
               <section key={mutation.id} className={`mutation-card ${approval.status}`}>
                 <div className="mutation-heading">
@@ -130,7 +133,10 @@ export function FlowChangeCards({ item, approvals }: Props) {
             const legacy =
               change.mode !== 'definition' || typeof change.after?.clientData !== 'string';
             const editable =
-              !legacy && !approvals.blocked && canEditApproval(approval, item.historical);
+              !legacy &&
+              !approvals.blocked &&
+              approvals.allowDataverseWrites &&
+              canEditApproval(approval, item.historical);
             const before = change.before?.definition;
             return (
               <section key={change.id} className={`mutation-card ${approval.status}`}>
@@ -286,7 +292,10 @@ export function ListMembershipCards({ item, approvals }: Props) {
               selectedMemberIds: membership.members.map((member) => member.recordId),
               status: 'pending' as const
             };
-            const editable = !approvals.blocked && canEditApproval(approval, item.historical);
+            const editable =
+              !approvals.blocked &&
+              approvals.allowDataverseWrites &&
+              canEditApproval(approval, item.historical);
             return (
               <section key={membership.id} className={`mutation-card ${approval.status}`}>
                 <div className="mutation-heading">

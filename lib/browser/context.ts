@@ -13,10 +13,27 @@ import { collectDataverseUserContext } from '../dataverse-user-context';
 import type { DataverseContext, DataverseUserContext } from '../types';
 
 export async function getActiveDataverseContext(
-  options: { includeUserSettings?: boolean } = {}
+  options: { includeUserSettings?: boolean; windowId?: number } = {}
 ): Promise<DataverseContext> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url) throw new Error('No active browser tab is available.');
+  const [tab] = await chrome.tabs.query({
+    active: true,
+    ...(options.windowId === undefined ? { currentWindow: true } : { windowId: options.windowId })
+  });
+  if (!tab?.url) {
+    // Newly opened tabs can have only pendingUrl. Do not inject into an uncommitted page.
+    const pending = tab?.pendingUrl ? contextFromUrl(tab.pendingUrl, tab.title) : undefined;
+    return {
+      ...pending,
+      isDataverse: false,
+      source: 'url',
+      title: tab?.title,
+      fields: [],
+      capturedAt: new Date().toISOString(),
+      warning:
+        pending?.warning ||
+        'The active page is loading or unavailable. Select a Dataverse tab to use data and flow tools.'
+    };
+  }
 
   const base = contextFromUrl(tab.url, tab.title);
   if (!base.isDataverse || !tab.id || !isDataverseUrl(tab.url)) return base;

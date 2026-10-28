@@ -306,7 +306,7 @@ export type ExtensionMessage =
       payload: { id: string; runToken: string; expectedOffset: number };
     }
   | { type: 'STOP_BULK_JOB'; payload: { id: string; reject?: boolean } }
-  | { type: 'GET_ACTIVE_CONTEXT' }
+  | { type: 'GET_ACTIVE_CONTEXT'; payload?: { windowId?: number } }
   | { type: 'CONTEXT_CHANGED' }
   | { type: 'NAVIGATION_STATUS'; payload: NavigationProgress }
   | { type: 'LLM_CHAT'; payload: LlmRequest }

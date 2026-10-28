@@ -132,6 +132,7 @@ export function useApprovals(options: {
   conversationId: string;
   blocked: boolean;
   allowBulkWrites?: boolean;
+  allowDataverseWrites?: boolean;
   onBusinessApproved: (event: ApprovalContinuation) => void;
   transcript: StoredTranscriptItem[];
   setTranscript: Dispatch<SetStateAction<StoredTranscriptItem[]>>;
@@ -183,7 +184,7 @@ export function useApprovals(options: {
     StoredMutationApprovalState
   >({
     name: 'execute_dataverse_mutation',
-    blocked: options.blocked,
+    blocked: options.blocked || options.allowDataverseWrites === false,
     initial: (proposal) => ({
       status: 'pending',
       selectedColumns: proposal.fields.map((field) => field.logicalName)
@@ -214,7 +215,7 @@ export function useApprovals(options: {
     StoredFlowChangeApprovalState
   >({
     name: 'execute_dataverse_flow_change',
-    blocked: options.blocked,
+    blocked: options.blocked || options.allowDataverseWrites === false,
     initial: () => ({ status: 'pending' }),
     request: (change) => ({ type: 'EXECUTE_DATAVERSE_FLOW_CHANGE', payload: { change } }),
     successActivity: (result) => ({
@@ -241,7 +242,7 @@ export function useApprovals(options: {
     StoredListMembershipApprovalState
   >({
     name: 'execute_marketing_list_membership',
-    blocked: options.blocked,
+    blocked: options.blocked || options.allowDataverseWrites === false,
     initial: (proposal) => ({
       status: 'pending',
       selectedMemberIds: proposal.members.map((member) => member.recordId)
@@ -322,6 +323,7 @@ export function useApprovals(options: {
 
   return {
     blocked: options.blocked,
+    allowDataverseWrites: options.allowDataverseWrites !== false,
     allowBulkWrites: options.allowBulkWrites !== false,
     bulkJobApprovals: bulk.states,
     setBulkJobApprovals: bulk.setStates,

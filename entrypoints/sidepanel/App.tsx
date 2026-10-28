@@ -67,6 +67,11 @@ export function App() {
   const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>([]);
   const activeRequestId = useRef<string | undefined>(undefined);
   const deletedConversationIds = useRef<Set<string>>(new Set());
+  const contextLoadId = useRef(0);
+  const panelWindowId = useRef<number | undefined>(undefined);
+  const conversationContext = useRef<
+    Pick<DataverseContext, 'origin' | 'environmentName' | 'tableLogicalName'>
+  >({});
 
   const loadSettings = useCallback(async () => {
     const loaded = await getSettings();
@@ -97,6 +102,7 @@ export function App() {
 
   const startNewConversation = useCallback(() => {
     setTranscript([]);
+    conversationContext.current = {};
     setPendingContinuation(undefined);
     setMutationApprovals({});
     setFlowChangeApprovals({});
@@ -118,6 +124,11 @@ export function App() {
       const stored = await getConversation(id);
       if (!stored) throw new Error('The selected conversation no longer exists.');
       const restored = restoreConversation(stored);
+      conversationContext.current = {
+        origin: stored.environmentOrigin,
+        environmentName: stored.environmentName,
+        tableLogicalName: stored.tableLogicalName
+      };
       setPendingContinuation(undefined);
       setTranscript(restored.transcript);
       setMutationApprovals(restored.mutationApprovals);
@@ -140,20 +151,32 @@ export function App() {
   }, []);
 
   const loadContext = useCallback(async (knownSettings?: ExtensionSettings) => {
+    const loadId = ++contextLoadId.current;
     setLoadingContext(true);
+    // Never leave the previous tab's data/tools active while the next context is loading.
+    setContext(undefined);
+    setSelectedFields(new Set());
     try {
-      const result = await sendExtensionMessage<DataverseContext>({ type: 'GET_ACTIVE_CONTEXT' });
+      const window = await chrome.windows.getCurrent();
+      panelWindowId.current = window.id;
+      const [result, currentSettings] = await Promise.all([
+        sendExtensionMessage<DataverseContext>({
+          type: 'GET_ACTIVE_CONTEXT',
+          payload: { windowId: window.id }
+        }),
+        knownSettings || getSettings()
+      ]);
+      if (loadId !== contextLoadId.current) return;
       if (!result.ok || !result.data)
         throw new Error(result.error || 'Could not inspect the active tab.');
       setContext(result.data);
-      const currentSettings = knownSettings || (await getSettings());
       const fields = filterContextFields(result.data, currentSettings.privacy.excludedFields);
       setSelectedFields(new Set(fields.map((field) => field.logicalName)));
       setError(undefined);
     } catch (loadError) {
-      setError(errorMessage(loadError));
+      if (loadId === contextLoadId.current) setError(errorMessage(loadError));
     } finally {
-      setLoadingContext(false);
+      if (loadId === contextLoadId.current) setLoadingContext(false);
     }
   }, []);
 
@@ -164,7 +187,8 @@ export function App() {
     loadContext,
     loadSkills,
     blocked: sending || historyLoading,
-    allowBulkWrites: includeContext,
+    allowDataverseWrites: includeContext && !loadingContext && Boolean(context?.isDataverse),
+    allowBulkWrites: includeContext && !loadingContext && Boolean(context?.isDataverse),
     onBusinessApproved: setPendingContinuation
   });
   const {
@@ -184,7 +208,10 @@ export function App() {
   const busy = sending || approving;
 
   useEffect(() => {
-    void loadSettings().then(loadContext);
+    let active = true;
+    void loadSettings().then((loaded) => {
+      if (active) void loadContext(loaded);
+    });
     void loadSkills();
 
     const messageListener = (message: ExtensionMessage) => {
@@ -201,11 +228,29 @@ export function App() {
       if (SKILLS_KEY in changes) void loadSkills();
     };
 
+    const tabActivated = (info: chrome.tabs.OnActivatedInfo) => {
+      if (info.windowId === panelWindowId.current) void loadContext();
+    };
+    const tabUpdated = (_tabId: number, info: chrome.tabs.OnUpdatedInfo, tab: chrome.tabs.Tab) => {
+      if (tab.active && tab.windowId === panelWindowId.current && (info.url || info.status))
+        void loadContext();
+    };
+    const windowFocused = (windowId: number) => {
+      if (windowId === panelWindowId.current) void loadContext();
+    };
     chrome.runtime.onMessage.addListener(messageListener);
     chrome.storage.onChanged.addListener(storageListener);
+    chrome.tabs.onActivated.addListener(tabActivated);
+    chrome.tabs.onUpdated.addListener(tabUpdated);
+    chrome.windows.onFocusChanged.addListener(windowFocused);
     return () => {
+      active = false;
+      ++contextLoadId.current;
       chrome.runtime.onMessage.removeListener(messageListener);
       chrome.storage.onChanged.removeListener(storageListener);
+      chrome.tabs.onActivated.removeListener(tabActivated);
+      chrome.tabs.onUpdated.removeListener(tabUpdated);
+      chrome.windows.onFocusChanged.removeListener(windowFocused);
     };
   }, [loadContext, loadSettings, loadSkills]);
 
@@ -220,9 +265,9 @@ export function App() {
         title,
         createdAt: conversationCreatedAt,
         updatedAt: new Date().toISOString(),
-        environmentName: context?.environmentName,
-        environmentOrigin: context?.origin,
-        tableLogicalName: context?.tableLogicalName,
+        environmentName: conversationContext.current.environmentName,
+        environmentOrigin: conversationContext.current.origin,
+        tableLogicalName: conversationContext.current.tableLogicalName,
         transcript,
         mutationApprovals,
         flowChangeApprovals,
@@ -307,8 +352,8 @@ export function App() {
     const requestContext: ConversationRequestContext = continuationRequest || {
       requestId,
       prompt,
-      environmentOrigin: context?.origin,
-      allowDataverseTools: includeContext,
+      environmentOrigin: context?.isDataverse ? context.origin : undefined,
+      allowDataverseTools: includeContext && !loadingContext && Boolean(context?.isDataverse),
       allowSkillTools: !skillRun && allowSkillManagement,
       skillRun,
       skillToolLimit: skillRun
@@ -316,6 +361,12 @@ export function App() {
         : undefined
     };
     if (!continuationRequest) {
+      if (context?.isDataverse)
+        conversationContext.current = {
+          origin: context.origin,
+          environmentName: context.environmentName,
+          tableLogicalName: context.tableLogicalName
+        };
       const userItem: TranscriptItem = {
         id: crypto.randomUUID(),
         role: 'user',
@@ -344,7 +395,7 @@ export function App() {
           allowSkillTools: requestContext.allowSkillTools,
           requestId,
           skillRun,
-          expectedOrigin: continuationRequest?.environmentOrigin,
+          expectedOrigin: continuationRequest?.environmentOrigin || suppliedContext?.origin,
           skillToolLimit: requestContext.skillToolLimit
         }
       });
@@ -634,7 +685,9 @@ export function App() {
                 ? 'Inspecting page…'
                 : context?.isDataverse
                   ? context.recordName || context.tableLogicalName || 'Dataverse page'
-                  : 'No Dataverse page detected'}
+                  : context?.pageType === 'power-automate'
+                    ? 'Power Automate'
+                    : 'No Dataverse page detected'}
             </h1>
           </div>
           <button
