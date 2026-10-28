@@ -231,6 +231,10 @@ textarea:focus { border-color: #7165df; box-shadow: 0 0 0 3px rgba(113, 101, 223
 .bulk-workspace-item { padding: 7px 0; border-bottom: 1px solid #e4e6ee; overflow-wrap: anywhere; white-space: pre-wrap; }
 .bulk-workspace-item code { font-size: 9px; }
 .bulk-row-inspection { max-height: 350px; overflow: auto; }
+.bulk-automation-options { display: grid; gap: 8px; margin: 10px 0; padding: 10px; min-width: 0; border: 1px solid #e2d7ba; border-radius: 7px; background: #fffcf3; }
+.bulk-automation-options legend { padding: 0 4px; font-weight: 700; }
+.bulk-automation-options label { font-weight: 600; }
+.bulk-automation-options small, .bulk-automation-options p { margin: 0; color: #6f6246; font-size: 10px; overflow-wrap: anywhere; }
 .bulk-job-card details { margin: 8px 0; }
 .bulk-job-card pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 10px; }
 

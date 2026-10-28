@@ -3,7 +3,8 @@ import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { bulkHarness, guid, updatePlan } from './fixtures/bulk';
 import { bulkRepository } from '../lib/bulk/repository';
 import { createDataset } from '../lib/bulk/datasets';
-import type { BulkChunkResult } from '../lib/bulk/contracts';
+import type { BulkChunkResult, BulkExecutionOptions } from '../lib/bulk/contracts';
+import { createBulkEngine } from '../lib/bulk/engine';
 
 beforeEach(() => {
   vi.stubGlobal('indexedDB', new IDBFactory());
@@ -49,10 +50,149 @@ describe('query-backed bulk engine', () => {
         result.total - result.remaining
       );
     expect(result).toMatchObject({ status: 'completed', succeeded: 1200, remaining: 0 });
-    expect(h.transport).toHaveBeenCalledTimes(24);
-    expect(h.transport.mock.calls.every(([request]) => request.rows.length <= 50)).toBe(true);
+    expect(h.transport).toHaveBeenCalledTimes(12);
+    expect(h.transport.mock.calls.every(([request]) => request.rows.length === 100)).toBe(true);
     expect(h.records.get(guid(5000))?.values.firstname).toBe('Old');
     await expect(h.engine.runChunk(preview.id, approval.runToken, 0)).rejects.toThrow(/stale/);
+  });
+
+  it('checkpoints a full 100-row chunk and a final partial chunk without skipping rows', async () => {
+    const h = bulkHarness(125);
+    const preview = await h.engine.prepare(updatePlan);
+    const approval = await h.engine.approve(preview.id, preview.revision);
+    const first = await h.engine.runChunk(preview.id, approval.runToken, 0);
+    expect(first).toMatchObject({ status: 'approved', succeeded: 100, remaining: 25 });
+    await expect(h.engine.runChunk(preview.id, approval.runToken, 50)).rejects.toThrow(/stale/);
+    const last = await h.engine.runChunk(preview.id, approval.runToken, 100);
+    expect(last).toMatchObject({ status: 'completed', succeeded: 125, remaining: 0 });
+    expect(h.transport.mock.calls.map(([request]) => request.rows.length)).toEqual([100, 25]);
+    const ids = h.transport.mock.calls.flatMap(([request]) =>
+      request.rows.map((row) => row.recordId)
+    );
+    expect(new Set(ids).size).toBe(125);
+    expect([...h.records.values()].every((record) => record.values.firstname === 'New')).toBe(true);
+  });
+
+  it('still checks the signed-in user between 100-row chunks', async () => {
+    const h = bulkHarness(125);
+    const preview = await h.engine.prepare(updatePlan);
+    const approval = await h.engine.approve(preview.id, preview.revision);
+    await h.engine.runChunk(preview.id, approval.runToken, 0);
+    h.setUser(guid(777));
+    await expect(h.engine.runChunk(preview.id, approval.runToken, 100)).rejects.toThrow(
+      /user changed/
+    );
+    expect(h.transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {},
+    { bypassCustomLogic: true },
+    { bypassPowerAutomate: true },
+    { bypassCustomLogic: true, bypassPowerAutomate: true }
+  ] satisfies BulkExecutionOptions[])(
+    'persists approval-bound automation options across chunks and engine instances: %j',
+    async (executionOptions) => {
+      const h = bulkHarness(125);
+      const preview = await h.engine.prepare(updatePlan);
+      expect(preview.executionOptions).toBeUndefined();
+      const expected = {
+        bypassCustomLogic: executionOptions.bypassCustomLogic === true,
+        bypassPowerAutomate: executionOptions.bypassPowerAutomate === true
+      };
+      const approval = await h.engine.approve(
+        preview.id,
+        preview.revision,
+        false,
+        executionOptions
+      );
+      expect(approval.summary.executionOptions).toEqual(expected);
+      expect((await bulkRepository.getJob(preview.id))?.summary.executionOptions).toEqual(expected);
+      await expect(h.engine.approve(preview.id, preview.revision, false, {})).rejects.toThrow(
+        /pending/
+      );
+      await h.engine.runChunk(preview.id, approval.runToken, 0);
+      const nextEngine = createBulkEngine({
+        origin: preview.environmentOrigin,
+        primitive: h.primitive,
+        transport: h.transport,
+        now: () => Date.parse(preview.createdAt)
+      });
+      const result = await nextEngine.runChunk(preview.id, approval.runToken, 100);
+      expect(result).toMatchObject({ status: 'completed', executionOptions: expected });
+      expect(h.transport).toHaveBeenCalledTimes(2);
+      for (const [request] of h.transport.mock.calls)
+        expect(request.executionOptions).toEqual(expected);
+    }
+  );
+
+  it('rejects malformed automation options without approving or submitting a write', async () => {
+    const h = bulkHarness(2);
+    const preview = await h.engine.prepare(updatePlan);
+    for (const executionOptions of [
+      null,
+      'true',
+      [],
+      { bypassCustomLogic: 'true' },
+      { bypassPowerAutomate: 1 },
+      { header: true }
+    ]) {
+      await expect(
+        h.engine.approve(
+          preview.id,
+          preview.revision,
+          false,
+          executionOptions as BulkExecutionOptions
+        )
+      ).rejects.toThrow(/execution options/);
+      const stored = await bulkRepository.getJob(preview.id);
+      expect(stored?.summary.status).toBe('pending');
+      expect(stored?.runToken).toBeUndefined();
+    }
+    expect(h.transport).not.toHaveBeenCalled();
+  });
+
+  it('does not inherit bypass choices into a fresh remaining-work approval', async () => {
+    const h = bulkHarness(125);
+    const preview = await h.engine.prepare(updatePlan);
+    const approval = await h.engine.approve(preview.id, preview.revision, false, {
+      bypassCustomLogic: true,
+      bypassPowerAutomate: true
+    });
+    await h.engine.runChunk(preview.id, approval.runToken, 0);
+    await h.engine.stop(preview.id);
+    const next = await h.engine.remaining(preview.id);
+    expect(next).toMatchObject({ total: 25, status: 'pending' });
+    expect(next.executionOptions).toBeUndefined();
+    expect((await bulkRepository.getJob(preview.id))?.summary.executionOptions).toEqual({
+      bypassCustomLogic: true,
+      bypassPowerAutomate: true
+    });
+    const nextApproval = await h.engine.approve(next.id, next.revision);
+    await h.engine.runChunk(next.id, nextApproval.runToken, 0);
+    expect(h.transport.mock.calls[1]![0].executionOptions).toEqual({
+      bypassCustomLogic: false,
+      bypassPowerAutomate: false
+    });
+  });
+
+  it('rejects bypass options on membership actions', async () => {
+    const h = bulkHarness(2);
+    const preview = await h.engine.prepare({
+      operation: 'membership',
+      selection: updatePlan.selection,
+      listId: guid(700000)
+    });
+    await expect(
+      h.engine.approve(preview.id, preview.revision, false, { bypassCustomLogic: true })
+    ).rejects.toThrow(/bulk record creates and updates/);
+    await expect(
+      h.engine.approve(preview.id, preview.revision, false, { bypassPowerAutomate: true })
+    ).rejects.toThrow(/bulk record creates and updates/);
+    expect((await bulkRepository.getJob(preview.id))?.summary.status).toBe('pending');
+    expect(
+      h.primitive.mock.calls.some(([request]) => request.action === 'execute_list_membership')
+    ).toBe(false);
   });
 
   it('excludes unchanged rows before approval', async () => {
@@ -167,10 +307,10 @@ describe('query-backed bulk engine', () => {
     h.records.get(guid(1))!.etag = 'W/"changed"';
     const approval = await h.engine.approve(preview.id, preview.revision);
     const result = await h.engine.runChunk(preview.id, approval.runToken, 0);
-    expect(result).toMatchObject({ status: 'failed', succeeded: 49, conflicts: 1, remaining: 70 });
-    await expect(h.engine.runChunk(preview.id, approval.runToken, 50)).rejects.toThrow(/stale/);
+    expect(result).toMatchObject({ status: 'failed', succeeded: 99, conflicts: 1, remaining: 20 });
+    await expect(h.engine.runChunk(preview.id, approval.runToken, 100)).rejects.toThrow(/stale/);
     const next = await h.engine.remaining(preview.id);
-    expect(next).toMatchObject({ status: 'pending', total: 71 });
+    expect(next).toMatchObject({ status: 'pending', total: 21 });
     expect((await bulkRepository.rows(next.id, 0, 50))[0]?.etag).toBe('W/"changed"');
     expect(h.transport).toHaveBeenCalledTimes(1);
   });
@@ -233,7 +373,7 @@ describe('query-backed bulk engine', () => {
       datasetId: dataset.summary.id,
       mapping: { First: 'firstname' }
     });
-    const original = await bulkRepository.rows(preview.id, 50, 50);
+    const original = await bulkRepository.rows(preview.id, 100, 50);
     const approval = await h.engine.approve(preview.id, preview.revision);
     h.setWrite(async (request) => {
       await h.apply(request);
@@ -242,10 +382,10 @@ describe('query-backed bulk engine', () => {
       };
     });
     const result = await h.engine.runChunk(preview.id, approval.runToken, 0);
-    expect(result.uncertain).toBe(50);
-    expect(h.records.size).toBe(50);
+    expect(result.uncertain).toBe(100);
+    expect(h.records.size).toBe(100);
     const remaining = await h.engine.remaining(preview.id);
-    expect(remaining).toMatchObject({ total: 1150, unchanged: 50, status: 'pending' });
+    expect(remaining).toMatchObject({ total: 1100, unchanged: 100, status: 'pending' });
     expect((await bulkRepository.rows(remaining.id, 0, 50)).map((row) => row.recordId)).toEqual(
       original.map((row) => row.recordId)
     );
@@ -269,15 +409,15 @@ describe('query-backed bulk engine', () => {
     await expect(h.engine.runChunk(preview.id, approval.runToken, 0)).rejects.toThrow(/quota/);
     expect((await bulkRepository.getJob(preview.id))?.inFlight).toMatchObject({
       start: 0,
-      count: 50
+      count: 100
     });
     await expect(h.engine.runChunk(preview.id, approval.runToken, 0)).rejects.toThrow(
       /interrupted/
     );
     loseCheckpoint = false;
     const next = await h.engine.remaining(preview.id);
-    expect(next).toMatchObject({ total: 70, unchanged: 50, status: 'pending' });
-    expect((await bulkRepository.getJob(preview.id))?.summary.uncertain).toBe(50);
+    expect(next).toMatchObject({ total: 20, unchanged: 100, status: 'pending' });
+    expect((await bulkRepository.getJob(preview.id))?.summary.uncertain).toBe(100);
     expect(h.transport).toHaveBeenCalledTimes(1);
   });
 
@@ -354,7 +494,7 @@ describe('query-backed bulk engine', () => {
     const approval = await h.engine.approve(preview.id, preview.revision);
     await h.engine.runChunk(preview.id, approval.runToken, 0);
     await h.engine.stop(preview.id);
-    await expect(h.engine.runChunk(preview.id, approval.runToken, 50)).rejects.toThrow(/stale/);
+    await expect(h.engine.runChunk(preview.id, approval.runToken, 100)).rejects.toThrow(/stale/);
     expect(h.transport).toHaveBeenCalledTimes(1);
   });
 
@@ -382,7 +522,7 @@ describe('query-backed bulk engine', () => {
         result.total - result.remaining
       );
     expect(result.succeeded).toBe(120);
-    expect(h.transport.mock.calls.every(([request]) => request.rows.length < 50)).toBe(true);
+    expect(h.transport.mock.calls.every(([request]) => request.rows.length < 100)).toBe(true);
     expect([...h.records.values()].every((record) => record.values.firstname === text)).toBe(true);
   });
 

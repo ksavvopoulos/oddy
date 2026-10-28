@@ -17,6 +17,7 @@ function BulkCard({
 }) {
   const approval = approvals.bulkJobApprovals[job.id] || { status: 'pending' as const };
   const progress = approvals.bulkProgress[job.id] || approval.result || job;
+  const executionOptions = progress.executionOptions || approval.executionOptions;
   const editable =
     !approvals.blocked && approvals.allowBulkWrites && canEditApproval(approval, item.historical);
   const [rows, setRows] = useState<BulkRow[]>();
@@ -139,6 +140,43 @@ function BulkCard({
           conflicts · {progress.failed} failed · {progress.uncertain} uncertain ·{' '}
           {progress.remaining} unprocessed
         </p>
+      )}
+      {job.operation !== 'membership' && (
+        <fieldset className="bulk-automation-options" disabled={!editable}>
+          <legend>Automation for this bulk job</legend>
+          <label>
+            <input
+              type="checkbox"
+              checked={executionOptions?.bypassCustomLogic === true}
+              disabled={!editable}
+              onChange={() => approvals.toggleBulkExecutionOption(job.id, 'bypassCustomLogic')}
+            />{' '}
+            Bypass custom plug-ins and classic workflows
+          </label>
+          <small>
+            Skips custom synchronous and asynchronous logic, including ISV logic. Requires
+            prvBypassCustomBusinessLogic (normally System Administrator). Microsoft system logic and
+            security checks still apply.
+          </small>
+          <label>
+            <input
+              type="checkbox"
+              checked={executionOptions?.bypassPowerAutomate === true}
+              disabled={!editable}
+              onChange={() => approvals.toggleBulkExecutionOption(job.id, 'bypassPowerAutomate')}
+            />{' '}
+            Suppress Power Automate triggers
+          </label>
+          <small>
+            Suppresses Dataverse-triggered flow jobs for these writes only. Flow owners are not
+            notified. Existing runs and separate writes made by plug-ins are not suppressed.
+          </small>
+          <p>
+            Both options default off and are fixed when you approve. Bypassing automation can skip
+            business validation and downstream processing; coordinate any follow-up with the owners.
+            Oddy never retries without your selected bypass options if Dataverse rejects them.
+          </p>
+        </fieldset>
       )}
       {job.operation === 'count_related' && (
         <label>

@@ -62,18 +62,32 @@ describe('bulk signed-session primitives', () => {
       origin,
       table: 'contact',
       operation: 'update',
-      values: Array.from({ length: 50 }, () => [
-        { column: 'new_casecount', value: '0' },
+      values: Array.from({ length: 100 }, (_, index) => [
+        { column: 'new_casecount', value: String(index) },
         { column: 'preferredcontactmethodcode', value: 'Email' }
       ])
     });
     expect(result.ok).toBe(true);
-    expect(result.bulkFields).toHaveLength(50);
+    expect(result.bulkFields).toHaveLength(100);
     expect(result.bulkFields?.[0]?.map((field) => field.proposedValue)).toEqual([0, 2]);
+    expect(result.bulkFields?.[99]?.map((field) => field.proposedValue)).toEqual([99, 2]);
     expect(mock).toHaveBeenCalledTimes(3);
     expect(
       vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')
     ).toBe(true);
+  });
+  it.each([0, 101])('rejects %s bulk field sets before fetching metadata', async (length) => {
+    const mock = setup();
+    const result = await executeDataversePrimitive({
+      action: 'bulk_fields',
+      origin,
+      table: 'contact',
+      operation: 'update',
+      values: Array.from({ length }, () => [{ column: 'firstname', value: 'New' }])
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('1–100');
+    expect(mock).not.toHaveBeenCalled();
   });
   it('rejects read-only or invalid typed values before any mutation', async () => {
     setup();

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BulkJobSummary } from '../../lib/bulk/contracts';
+import type { BulkExecutionOptions, BulkJobSummary } from '../../lib/bulk/contracts';
 import type {
   DataverseFlowChangeExecutionResult,
   PreparedDataverseFlowChange
@@ -301,6 +301,7 @@ export function useApprovals(options: {
       executeApprovedBulkJob(job, {
         send: sendExtensionMessage,
         acknowledgeReadableScope: state.acknowledgeReadableScope,
+        executionOptions: state.executionOptions,
         allowed: () => mounted.current && allowed.current,
         stopRequested: () => stopping.current.has(job.id),
         progress: (summary) => {
@@ -343,6 +344,21 @@ export function useApprovals(options: {
         return {
           ...states,
           [id]: { ...state, acknowledgeReadableScope: !state.acknowledgeReadableScope }
+        };
+      }),
+    toggleBulkExecutionOption: (id: string, option: keyof BulkExecutionOptions) =>
+      bulk.setStates((states) => {
+        const state = states[id];
+        if (!state || !canEditApproval(state, isHistorical('pendingBulkJobs')(id))) return states;
+        return {
+          ...states,
+          [id]: {
+            ...state,
+            executionOptions: {
+              ...state.executionOptions,
+              [option]: !state.executionOptions?.[option]
+            }
+          }
         };
       }),
     stopBulkJob: (id: string) => {

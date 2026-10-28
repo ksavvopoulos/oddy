@@ -113,7 +113,8 @@ async function handleMessage(message: ExtensionMessage): Promise<MessageResult<u
           data: await engine.approve(
             id,
             message.payload.revision,
-            message.payload.acknowledgeReadableScope
+            message.payload.acknowledgeReadableScope,
+            message.payload.executionOptions
           )
         };
       if (message.type === 'EXECUTE_BULK_JOB_CHUNK')

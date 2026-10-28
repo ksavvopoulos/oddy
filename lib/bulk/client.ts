@@ -1,5 +1,5 @@
 import type { ExtensionMessage, MessageResult } from '../types';
-import type { BulkJobSummary } from './contracts';
+import type { BulkExecutionOptions, BulkJobSummary } from './contracts';
 
 export function bulkAudit(summary: BulkJobSummary) {
   return {
@@ -7,6 +7,10 @@ export function bulkAudit(summary: BulkJobSummary) {
     operation: summary.operation,
     table: summary.table,
     status: summary.status,
+    executionOptions: {
+      bypassCustomLogic: summary.executionOptions?.bypassCustomLogic === true,
+      bypassPowerAutomate: summary.executionOptions?.bypassPowerAutomate === true
+    },
     matched: summary.matched,
     unchanged: summary.unchanged,
     total: summary.total,
@@ -27,6 +31,7 @@ export async function executeApprovedBulkJob(
     stopRequested: () => boolean;
     progress: (summary: BulkJobSummary) => void;
     acknowledgeReadableScope?: boolean;
+    executionOptions?: BulkExecutionOptions;
   }
 ): Promise<BulkJobSummary> {
   if (!client.allowed()) throw new Error('Dataverse consent is required to approve this bulk job.');
@@ -37,7 +42,8 @@ export async function executeApprovedBulkJob(
       payload: {
         id: preview.id,
         revision: preview.revision,
-        acknowledgeReadableScope: client.acknowledgeReadableScope === true
+        acknowledgeReadableScope: client.acknowledgeReadableScope === true,
+        executionOptions: client.executionOptions
       }
     });
     if (!approval.ok || !approval.data?.runToken)

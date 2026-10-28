@@ -44,7 +44,7 @@ export async function executeBulkTransport(
     if (
       !['create', 'update'].includes(request.operation) ||
       !request.rows.length ||
-      request.rows.length > 50 ||
+      request.rows.length > 100 ||
       new Set(request.rows.map((row) => row.recordId)).size !== request.rows.length
     )
       throw new Error('Invalid bulk chunk.');
@@ -69,6 +69,19 @@ export async function executeBulkTransport(
           throw new Error('Bulk payloads must contain validated finite scalar values.');
       }
     }
+    const executionOptions = request.executionOptions;
+    if (
+      executionOptions !== undefined &&
+      (!executionOptions ||
+        typeof executionOptions !== 'object' ||
+        Array.isArray(executionOptions) ||
+        Object.entries(executionOptions).some(
+          ([key, value]) =>
+            !['bypassCustomLogic', 'bypassPowerAutomate'].includes(key) ||
+            typeof value !== 'boolean'
+        ))
+    )
+      throw new Error('Invalid bulk execution options.');
     const headers = {
       Accept: 'application/json',
       'OData-MaxVersion': '4.0',
@@ -84,6 +97,14 @@ export async function executeBulkTransport(
     if (identity.UserId?.replace(/[{}]/g, '').toLowerCase() !== request.userId.toLowerCase())
       throw new Error('The signed-in Dataverse user changed; prepare a fresh preview.');
 
+    // Optional parameters belong on EVERY inner write, not the batch envelope or identity read.
+    const bypassHeaders =
+      (executionOptions?.bypassCustomLogic === true
+        ? 'MSCRM.BypassBusinessLogicExecution: CustomSync,CustomAsync\r\n'
+        : '') +
+      (executionOptions?.bypassPowerAutomate === true
+        ? 'MSCRM.SuppressCallbackRegistrationExpanderJob: true\r\n'
+        : '');
     const boundary = `batch_${crypto.randomUUID().replace(/-/g, '')}`;
     const parts = request.rows.map((row, index) => {
       // Separate change sets allow precise per-row outcomes; the whole job is not a transaction.
@@ -98,7 +119,7 @@ export async function executeBulkTransport(
         `--${change}\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\nContent-ID: ${index + 1}\r\n\r\n` +
         `${request.operation === 'update' ? 'PATCH' : 'POST'} ${path} HTTP/1.1\r\nContent-Type: application/json; charset=utf-8\r\n` +
         `${request.operation === 'update' ? `If-Match: ${row.etag}\r\n` : ''}` +
-        `Accept: application/json\r\n\r\n${JSON.stringify(payload)}\r\n--${change}--\r\n`
+        `Accept: application/json\r\n${bypassHeaders}\r\n${JSON.stringify(payload)}\r\n--${change}--\r\n`
       );
     });
     submitted = true;

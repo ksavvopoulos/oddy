@@ -11,6 +11,9 @@ import type { ApprovalActions } from '../entrypoints/sidepanel/useApprovals';
 import { conversationFixture, flowProposal } from './fixtures/proposals';
 import { definitionProposal } from './fixtures/flow-definitions';
 import type { PreparedDataverseFlowChange } from '../lib/flows/contracts';
+import { BulkJobCards } from '../entrypoints/sidepanel/BulkJobCards';
+import { restoreConversation } from '../lib/conversation-model';
+import { bulkSummary } from './fixtures/bulk';
 
 function approvalActions(): ApprovalActions {
   const conversation = conversationFixture();
@@ -21,6 +24,7 @@ function approvalActions(): ApprovalActions {
     rejectBulkJob: vi.fn(),
     stopBulkJob: vi.fn(),
     toggleBulkReadableScope: vi.fn(),
+    toggleBulkExecutionOption: vi.fn(),
     bulkProgress: {},
     allowBulkWrites: true,
     allowDataverseWrites: true,
@@ -47,6 +51,48 @@ function approvalActions(): ApprovalActions {
     rejectSkillChange: vi.fn()
   };
 }
+
+describe('Bulk automation approval controls', () => {
+  it('restores bypass choices as read-only history without making a saved approval executable', () => {
+    const stored = conversationFixture();
+    const job = bulkSummary();
+    stored.transcript[1] = { ...stored.transcript[1]!, pendingBulkJobs: [job] };
+    stored.bulkJobApprovals = {
+      [job.id]: {
+        status: 'approving',
+        executionOptions: { bypassCustomLogic: true, bypassPowerAutomate: true }
+      }
+    };
+    const restored = restoreConversation(stored);
+    const approvals = approvalActions();
+    approvals.bulkJobApprovals = restored.bulkJobApprovals!;
+    const html = renderToStaticMarkup(
+      createElement(BulkJobCards, {
+        item: restored.transcript[1]!,
+        approvals
+      })
+    );
+    expect(html).toContain('Historical preview: read-only');
+    expect(html.match(/checked=""/g)).toHaveLength(2);
+    expect(html.match(/type="checkbox"[^>]*disabled=""/g)).toHaveLength(2);
+    expect(html).not.toContain('mutation-approve');
+    expect(approvals.approveBulkJob).not.toHaveBeenCalled();
+  });
+
+  it('does not offer automation bypass for membership actions', () => {
+    const item = {
+      ...conversationFixture().transcript[1]!,
+      pendingBulkJobs: [bulkSummary({ operation: 'membership' })]
+    };
+    const html = renderToStaticMarkup(
+      createElement(BulkJobCards, { item, approvals: approvalActions() })
+    );
+    expect(html).not.toContain('Automation for this bulk job');
+    expect(html).not.toContain('Bypass custom plug-ins');
+    expect(html).not.toContain('Suppress Power Automate triggers');
+    expect(html).toContain('mutation-approve');
+  });
+});
 
 describe('Cloud-flow draft save disclosure', () => {
   it('shows the full native definition for creation without typed trigger/action views', () => {

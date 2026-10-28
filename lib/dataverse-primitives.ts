@@ -1435,8 +1435,8 @@ export async function executeDataversePrimitive(
       };
     }
     if (request.action === 'bulk_fields') {
-      if (!request.values.length || request.values.length > 50)
-        throw new Error('Validate 1–50 bounded rows at a time.');
+      if (!request.values.length || request.values.length > 100)
+        throw new Error('Validate 1–100 bounded rows at a time.');
       const entity = await resolveEntity(request.table);
       const bulkFields = [];
       for (const values of request.values)

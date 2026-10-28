@@ -1,4 +1,4 @@
-import type { BulkJobSummary } from './bulk/contracts';
+import type { BulkExecutionOptions, BulkJobSummary } from './bulk/contracts';
 import type {
   DataverseFlowChangeExecutionResult,
   PreparedDataverseFlowChange
@@ -59,6 +59,7 @@ export interface StoredListMembershipApprovalState extends ApprovalState<Marketi
 
 export interface StoredSkillChangeApprovalState extends ApprovalState<OddySkillChangeExecutionResult> {}
 export interface StoredBulkJobApprovalState extends ApprovalState<BulkJobSummary> {
+  executionOptions?: BulkExecutionOptions;
   acknowledgeReadableScope?: boolean;
 }
 

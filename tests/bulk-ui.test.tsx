@@ -82,7 +82,8 @@ function route(h: ReturnType<typeof bulkHarness>, preview: BulkJobSummary) {
           data: await h.engine.approve(
             message.payload.id,
             message.payload.revision,
-            message.payload.acknowledgeReadableScope
+            message.payload.acknowledgeReadableScope,
+            message.payload.executionOptions
           )
         };
       if (message.type === 'EXECUTE_BULK_JOB_CHUNK')
@@ -134,6 +135,12 @@ describe('real side-panel bulk approvals', () => {
     const chats = route(h, preview);
     const approve = await submit(120);
     expect(h.transport).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('checkbox', { name: 'Bypass custom plug-ins and classic workflows' })
+    ).toHaveProperty('checked', false);
+    expect(
+      screen.getByRole('checkbox', { name: 'Suppress Power Automate triggers' })
+    ).toHaveProperty('checked', false);
     fireEvent.click(screen.getByRole('button', { name: 'Inspect full selection locally' }));
     await screen.findByText(/Rows 1–25 of 120/);
     fireEvent.click(screen.getByRole('button', { name: 'Next 25' }));
@@ -141,7 +148,8 @@ describe('real side-panel bulk approvals', () => {
     expect(chats()).toBe(1);
     fireEvent.click(approve);
     await screen.findByText('The bulk request is complete.');
-    expect(h.transport).toHaveBeenCalledTimes(3);
+    expect(h.transport).toHaveBeenCalledTimes(2);
+    expect(h.transport.mock.calls.map(([request]) => request.rows.length)).toEqual([100, 20]);
     expect(chats()).toBe(2);
     const continuation = vi
       .mocked(sendExtensionMessage)
@@ -151,6 +159,89 @@ describe('real side-panel bulk approvals', () => {
     expect(JSON.stringify(continuation)).toContain('"succeeded\\":120');
     expect(JSON.stringify(continuation)).not.toContain(guid(100));
     expect(JSON.stringify(continuation)).not.toContain('runToken');
+  });
+
+  it('requires per-job opt-in and fixes both bypass choices at approval', async () => {
+    const h = bulkHarness(125);
+    const preview = await h.engine.prepare(updatePlan);
+    route(h, preview);
+    const approve = await submit(125);
+    const custom = screen.getByRole('checkbox', {
+      name: 'Bypass custom plug-ins and classic workflows'
+    });
+    const flows = screen.getByRole('checkbox', { name: 'Suppress Power Automate triggers' });
+    expect(custom).toHaveProperty('checked', false);
+    expect(flows).toHaveProperty('checked', false);
+    fireEvent.click(custom);
+    expect(custom).toHaveProperty('checked', true);
+    expect(flows).toHaveProperty('checked', false);
+    fireEvent.click(flows);
+    expect(h.transport).not.toHaveBeenCalled();
+    fireEvent.click(approve);
+    await screen.findByText('The bulk request is complete.');
+    expect(custom).toHaveProperty('disabled', true);
+    expect(flows).toHaveProperty('disabled', true);
+    const expected = { bypassCustomLogic: true, bypassPowerAutomate: true };
+    const approval = vi
+      .mocked(sendExtensionMessage)
+      .mock.calls.map(([message]) => message)
+      .find((message) => message.type === 'APPROVE_BULK_JOB');
+    expect(approval?.payload.executionOptions).toEqual(expected);
+    expect(h.transport).toHaveBeenCalledTimes(2);
+    for (const [request] of h.transport.mock.calls)
+      expect(request.executionOptions).toEqual(expected);
+    const continuation = vi
+      .mocked(sendExtensionMessage)
+      .mock.calls.map(([message]) => message)
+      .filter((message) => message.type === 'LLM_CHAT')[1]!;
+    expect(JSON.stringify(continuation)).toContain('bypassCustomLogic\\\":true');
+    expect(JSON.stringify(continuation)).toContain('bypassPowerAutomate\\\":true');
+    fireEvent.click(custom);
+    expect(custom).toHaveProperty('checked', true);
+    expect(h.transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps rejected bypass choices visible and resets them on a fresh remaining-work card', async () => {
+    const h = bulkHarness(120);
+    const preview = await h.engine.prepare(updatePlan);
+    h.setWrite(async (request) => ({
+      error: 'Bypass privilege denied',
+      outcomes: request.rows.map((row) => ({
+        recordId: row.recordId,
+        status: 'failed',
+        error: 'Bypass privilege denied'
+      }))
+    }));
+    const chats = route(h, preview);
+    const approve = await submit(120);
+    const custom = screen.getByRole('checkbox', {
+      name: 'Bypass custom plug-ins and classic workflows'
+    });
+    fireEvent.click(custom);
+    fireEvent.click(approve);
+    await screen.findByText('Bulk job stopped; reconciliation required');
+    expect(h.transport).toHaveBeenCalledTimes(1);
+    expect(chats()).toBe(1);
+    expect(custom).toHaveProperty('checked', true);
+    expect(custom).toHaveProperty('disabled', true);
+    expect(h.transport.mock.calls[0]![0].executionOptions).toEqual({
+      bypassCustomLogic: true,
+      bypassPowerAutomate: false
+    });
+    fireEvent.click(screen.getByText('Bulk workspace · datasets and recovery'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Prepare remaining-work preview' }));
+    await screen.findByRole('button', { name: 'Approve 120 rows' });
+    const pendingCustom = screen
+      .getAllByRole('checkbox', { name: 'Bypass custom plug-ins and classic workflows' })
+      .filter((input) => !(input as HTMLInputElement).disabled);
+    const pendingFlows = screen
+      .getAllByRole('checkbox', { name: 'Suppress Power Automate triggers' })
+      .filter((input) => !(input as HTMLInputElement).disabled);
+    expect(pendingCustom).toHaveLength(1);
+    expect(pendingFlows).toHaveLength(1);
+    expect(pendingCustom[0]).toHaveProperty('checked', false);
+    expect(pendingFlows[0]).toHaveProperty('checked', false);
+    expect(h.transport).toHaveBeenCalledTimes(1);
   });
 
   it('requires explicit readable-source acknowledgement before applying related counts', async () => {
@@ -191,7 +282,7 @@ describe('real side-panel bulk approvals', () => {
     fireEvent.click(screen.getByText('Bulk workspace · datasets and recovery'));
     const prepare = await screen.findByRole('button', { name: 'Prepare remaining-work preview' });
     fireEvent.click(prepare);
-    await screen.findByRole('button', { name: 'Approve 71 rows' });
+    await screen.findByRole('button', { name: 'Approve 21 rows' });
     expect(h.transport).toHaveBeenCalledTimes(1);
     expect(chats()).toBe(1);
   });

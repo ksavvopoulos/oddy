@@ -63,6 +63,10 @@ export interface BulkPage {
 }
 export type BulkJobStatus =
   'preparing' | 'pending' | 'approved' | 'running' | 'completed' | 'failed' | 'paused' | 'rejected';
+export interface BulkExecutionOptions {
+  bypassCustomLogic?: boolean;
+  bypassPowerAutomate?: boolean;
+}
 export interface BulkJobSummary {
   id: string;
   revision: string;
@@ -90,6 +94,8 @@ export interface BulkJobSummary {
     after: Record<string, unknown>;
   }>;
   warnings: string[];
+  /** User-selected at approval, fixed for the run; absent on older jobs and fresh previews. */
+  executionOptions?: BulkExecutionOptions;
   error?: string;
   retryAfterSeconds?: number;
   retryAfterUtc?: string;
@@ -118,6 +124,7 @@ export interface BulkChunkResult {
   error?: string;
 }
 export interface BulkTransportRequest {
+  executionOptions?: BulkExecutionOptions;
   origin: string;
   userId: string;
   operation: 'create' | 'update';

@@ -77,6 +77,26 @@ describe('live bulk approval client', () => {
     expect(JSON.stringify(bulkAudit(result))).not.toContain('private-token');
     expect(bulkAudit(result)).not.toHaveProperty('sample');
   });
+  it('sends bypass choices only at approval, never as per-chunk overrides', async () => {
+    const c = client();
+    const executionOptions = { bypassCustomLogic: true, bypassPowerAutomate: true };
+    await executeApprovedBulkJob(bulkSummary(), { ...c, executionOptions });
+    expect(c.raw.mock.calls[0]![0]).toMatchObject({
+      type: 'APPROVE_BULK_JOB',
+      payload: { executionOptions }
+    });
+    for (const [message] of c.raw.mock.calls.slice(1))
+      if (message.type === 'EXECUTE_BULK_JOB_CHUNK')
+        expect(message.payload).not.toHaveProperty('executionOptions');
+    expect(bulkAudit(bulkSummary({ executionOptions }))).toHaveProperty(
+      'executionOptions',
+      executionOptions
+    );
+    expect(bulkAudit(bulkSummary())).toHaveProperty('executionOptions', {
+      bypassCustomLogic: false,
+      bypassPowerAutomate: false
+    });
+  });
   it('does not request approval without current consent', async () => {
     const c = client({ allowed: () => false });
     await expect(executeApprovedBulkJob(bulkSummary(), c)).rejects.toThrow(/consent/);

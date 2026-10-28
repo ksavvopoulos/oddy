@@ -1,4 +1,4 @@
-import type { BulkDatasetRecord, BulkJobSummary } from './bulk/contracts';
+import type { BulkDatasetRecord, BulkExecutionOptions, BulkJobSummary } from './bulk/contracts';
 import type { PreparedDataverseFlowChange } from './flows/contracts';
 
 export interface AzureOpenAISettings {
@@ -299,7 +299,12 @@ export type ExtensionMessage =
   | { type: 'PREPARE_BULK_JOB_REMAINDER'; payload: { id: string } }
   | {
       type: 'APPROVE_BULK_JOB';
-      payload: { id: string; revision: string; acknowledgeReadableScope?: boolean };
+      payload: {
+        id: string;
+        revision: string;
+        acknowledgeReadableScope?: boolean;
+        executionOptions?: BulkExecutionOptions;
+      };
     }
   | {
       type: 'EXECUTE_BULK_JOB_CHUNK';

@@ -6,6 +6,7 @@ import type {
 import type { DataverseMutationValueInput, PreparedDataverseMutationField } from '../types';
 import type {
   BulkChunkResult,
+  BulkExecutionOptions,
   BulkJob,
   BulkJobSummary,
   BulkPlan,
@@ -419,7 +420,12 @@ export function createBulkEngine(options: {
     }
   };
 
-  const approve = (id: string, revision: string, acknowledgeReadableScope = false) =>
+  const approve = (
+    id: string,
+    revision: string,
+    acknowledgeReadableScope = false,
+    executionOptions: BulkExecutionOptions = {}
+  ) =>
     locked(id, async () => {
       const job = await get(id);
       if (
@@ -433,6 +439,24 @@ export function createBulkEngine(options: {
         throw new Error(
           'Acknowledge that related counts include only records readable by the execution user.'
         );
+      if (
+        !executionOptions ||
+        typeof executionOptions !== 'object' ||
+        Array.isArray(executionOptions) ||
+        Object.entries(executionOptions).some(
+          ([key, value]) =>
+            !['bypassCustomLogic', 'bypassPowerAutomate'].includes(key) ||
+            typeof value !== 'boolean'
+        )
+      )
+        throw new Error('Invalid bulk execution options; use only explicit bypass booleans.');
+      const approvedOptions = {
+        bypassCustomLogic: executionOptions.bypassCustomLogic === true,
+        bypassPowerAutomate: executionOptions.bypassPowerAutomate === true
+      };
+      if (job.plan.operation === 'membership' && Object.values(approvedOptions).some(Boolean))
+        throw new Error('Automation bypass is supported only for bulk record creates and updates.');
+      job.summary.executionOptions = approvedOptions;
       job.summary.status = 'approved';
       job.runToken = crypto.randomUUID();
       await repo.save(job);
@@ -453,9 +477,10 @@ export function createBulkEngine(options: {
         throw new Error(
           'Bulk execution is stale, interrupted, expired, or already in flight. Prepare a remaining-work preview; do not replay it.'
         );
-      const candidates = await repo.rows(id, job.nextIndex, 50);
+      const chunkSize = job.plan.operation === 'membership' ? 50 : 100;
+      const candidates = await repo.rows(id, job.nextIndex, chunkSize);
       if (
-        candidates.length !== Math.min(50, job.summary.total - job.nextIndex) ||
+        candidates.length !== Math.min(chunkSize, job.summary.total - job.nextIndex) ||
         candidates.some(
           (row, index) => row.status !== 'pending' || row.index !== job.nextIndex + index
         )
@@ -556,6 +581,7 @@ export function createBulkEngine(options: {
             operation: job.plan.operation === 'create' ? 'create' : 'update',
             entitySetName: job.entitySetName,
             primaryIdAttribute: job.primaryIdAttribute,
+            executionOptions: job.summary.executionOptions,
             rows: rows.map((row) => ({
               recordId: row.recordId,
               etag: row.etag,
