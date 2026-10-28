@@ -9,6 +9,7 @@ import { openDataverseFlowDesigner } from '../browser/flow-navigation';
 import { errorMessage } from '../messages';
 import { getUserSkills, prepareOddySkillChange, skillRevision } from '../skills';
 import type { DataverseContext } from '../types';
+import type { DataverseFlowListOptions } from '../flows/contracts';
 import type { AssistantToolResult } from './contracts';
 import {
   stringValue,
@@ -142,10 +143,17 @@ export async function executeAssistantTool(
   }
 
   if (toolName === 'list_dataverse_flows') {
+    const options = args as DataverseFlowListOptions & { top?: number };
     return executeFlowPrimitiveInActiveTab(context, {
       action: 'list_flows',
       origin: context.origin,
-      top: numberValue(args.top, 20, 1, 50)
+      pageSize: options.pageSize,
+      filters: options.filters,
+      orderBy: options.orderBy,
+      definitionScope: options.definitionScope,
+      trigger: options.trigger,
+      cursor: options.cursor,
+      top: options.top
     });
   }
   if (toolName === 'get_dataverse_flow') {

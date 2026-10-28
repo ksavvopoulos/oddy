@@ -2,6 +2,10 @@ import type {
   DataverseConnectionReferenceSummary,
   DataverseFlowDefinition,
   DataverseFlowDetail,
+  DataverseFlowListItem,
+  DataverseFlowListOptions,
+  DataverseFlowTriggerSummary,
+  DataverseFlowEvent,
   DataverseFlowPrimitiveRequest,
   DataverseFlowPrimitiveResult,
   DataverseFlowState
@@ -483,21 +487,442 @@ export async function executeDataverseFlowPrimitive(
     if (request.action === 'get_flow')
       return { ok: true, action: request.action, flow: await getFlow(request.workflowId) };
     if (request.action === 'list_flows') {
-      const url = new URL(`${request.origin}/api/data/v9.2/workflows`);
-      url.searchParams.set(
+      const keys = (value: unknown, allowed: string[], label: string): JsonObject => {
+        if (!object(value) || Object.keys(value).some((key) => !allowed.includes(key)))
+          throw new Error(`${label} contains invalid or unsupported fields.`);
+        return value;
+      };
+      const choice = <T extends string>(
+        value: unknown,
+        choices: readonly T[],
+        label: string
+      ): T => {
+        if (typeof value !== 'string' || !choices.includes(value as T))
+          throw new Error(`${label} must be one of: ${choices.join(', ')}.`);
+        return value as T;
+      };
+      const normalizeQuery = (input: unknown) => {
+        const raw = keys(
+          input,
+          ['pageSize', 'filters', 'orderBy', 'definitionScope', 'trigger'],
+          'Flow query'
+        );
+        const broadTriggerSearch =
+          object(raw.trigger) && (raw.trigger.table != null || raw.trigger.event != null);
+        const pageSize = raw.pageSize ?? (broadTriggerSearch ? 100 : 20);
+        if (
+          typeof pageSize !== 'number' ||
+          !Number.isInteger(pageSize) ||
+          pageSize < 1 ||
+          pageSize > 100
+        )
+          throw new Error('Flow pageSize must be an integer from 1 to 100.');
+        const filter =
+          raw.filters == null
+            ? {}
+            : keys(raw.filters, ['name', 'nameMatch', 'state', 'isManaged'], 'Flow filters');
+        const filters: NonNullable<DataverseFlowListOptions['filters']> = {};
+        if (filter.name != null) {
+          filters.name = requireString(filter.name, 'Flow name filter', 200);
+          filters.nameMatch = choice(
+            filter.nameMatch ?? 'contains',
+            ['eq', 'contains', 'starts-with'] as const,
+            'Name match'
+          );
+        } else if (filter.nameMatch != null) throw new Error('nameMatch requires a name filter.');
+        if (filter.state != null)
+          filters.state = choice(
+            filter.state,
+            ['draft', 'activated', 'suspended'] as const,
+            'Flow state'
+          );
+        if (filter.isManaged != null) {
+          if (typeof filter.isManaged !== 'boolean')
+            throw new Error('isManaged must be a boolean.');
+          filters.isManaged = filter.isManaged;
+        }
+        const order =
+          raw.orderBy == null ? {} : keys(raw.orderBy, ['field', 'direction'], 'Flow ordering');
+        const orderBy = {
+          field: choice(
+            order.field ?? 'modifiedon',
+            ['name', 'modifiedon', 'statecode'] as const,
+            'Order field'
+          ),
+          direction: choice(order.direction ?? 'desc', ['asc', 'desc'] as const, 'Order direction')
+        };
+        const definitionScope = choice(
+          raw.definitionScope ?? 'latest',
+          ['published', 'latest'] as const,
+          'Definition scope'
+        );
+        const triggerFilter =
+          raw.trigger == null ? {} : keys(raw.trigger, ['table', 'event'], 'Trigger filter');
+        const trigger: NonNullable<DataverseFlowListOptions['trigger']> = {};
+        if (triggerFilter.table != null) {
+          trigger.table = requireString(
+            triggerFilter.table,
+            'Trigger table logical name',
+            100
+          ).toLowerCase();
+          if (!/^[a-z][a-z0-9_]*$/.test(trigger.table))
+            throw new Error('Resolve the table first and use its exact Dataverse logical name.');
+        }
+        if (triggerFilter.event != null)
+          trigger.event = choice(
+            triggerFilter.event,
+            ['create', 'update', 'delete'] as const,
+            'Trigger event'
+          );
+        return { pageSize, filters, orderBy, definitionScope, trigger };
+      };
+      const input: JsonObject = {};
+      for (const key of ['pageSize', 'filters', 'orderBy', 'definitionScope', 'trigger'] as const)
+        if (request[key] != null) input[key] = request[key];
+      if (request.top != null) {
+        if (request.pageSize != null && request.top !== request.pageSize)
+          throw new Error('Use pageSize, not conflicting pageSize and top values.');
+        input.pageSize = request.top;
+      }
+      let query = normalizeQuery(input);
+      let continuation: string | undefined;
+      if (request.cursor != null) {
+        const cursor = requireString(request.cursor, 'Flow continuation cursor', 64_000);
+        let decoded: JsonObject;
+        try {
+          if (!cursor.startsWith('flow-list-v1.')) throw new Error('version');
+          decoded = keys(
+            JSON.parse(decodeURIComponent(atob(cursor.slice(13)))),
+            ['version', 'origin', 'query', 'nextLink'],
+            'Cursor'
+          );
+          if (decoded.version !== 1 || decoded.origin !== request.origin) throw new Error('origin');
+        } catch {
+          throw new Error(
+            'The flow cursor is invalid or belongs to a different environment. Start a new listing.'
+          );
+        }
+        query = normalizeQuery(decoded.query);
+        if (JSON.stringify(normalizeQuery({ ...query, ...input })) !== JSON.stringify(query))
+          throw new Error(
+            'Do not change filters, ordering, scope, or pageSize when continuing a flow listing.'
+          );
+        continuation = requireString(decoded.nextLink, 'Flow continuation URL', 32_000);
+      }
+      const base = new URL(`${request.origin}/api/data/v9.2/workflows`);
+      base.searchParams.set(
         '$select',
         'workflowid,name,description,statecode,componentstate,category,type,ismanaged,modifiedon,clientdata'
       );
-      url.searchParams.set('$filter', 'category eq 5 and type eq 1');
-      url.searchParams.set('$orderby', 'modifiedon desc');
-      url.searchParams.set('$top', String(Math.min(Math.max(request.top || 20, 1), 50)));
-      const payload = await getJson<{ value?: WorkflowRecord[] }>(url.toString(), true);
-      const flows = (payload.value || [])
-        .map(flowDetail)
-        .map(
-          ({ etag: _etag, definition: _definition, warnings: _warnings, ...summary }) => summary
+      const clauses = [
+        'category eq 5',
+        'type eq 1',
+        query.definitionScope === 'published'
+          ? 'componentstate eq 0'
+          : '(componentstate eq 0 or componentstate eq 1)'
+      ];
+      if (query.filters.name !== undefined) {
+        const literal = `'${query.filters.name.replace(/'/g, "''")}'`;
+        clauses.push(
+          query.filters.nameMatch === 'eq'
+            ? `name eq ${literal}`
+            : query.filters.nameMatch === 'starts-with'
+              ? `startswith(name,${literal})`
+              : `contains(name,${literal})`
         );
-      return { ok: true, action: request.action, flows };
+      }
+      if (query.filters.state !== undefined)
+        clauses.push(
+          `statecode eq ${{ draft: 0, activated: 1, suspended: 2 }[query.filters.state]}`
+        );
+      if (query.filters.isManaged !== undefined)
+        clauses.push(`ismanaged eq ${query.filters.isManaged}`);
+      base.searchParams.set('$filter', clauses.join(' and '));
+      base.searchParams.set(
+        '$orderby',
+        `${query.orderBy.field} ${query.orderBy.direction},workflowid asc`
+      );
+      const safeLink = (value: string) => {
+        const url = new URL(value);
+        if (
+          url.origin !== request.origin ||
+          url.pathname !== base.pathname ||
+          url.username ||
+          url.password ||
+          url.hash ||
+          !url.searchParams.get('$skiptoken') ||
+          [...url.searchParams.keys()].some(
+            (key) => !['$select', '$filter', '$orderby', '$skiptoken'].includes(key)
+          ) ||
+          [...new Set(url.searchParams.keys())].some(
+            (key) => url.searchParams.getAll(key).length !== 1
+          ) ||
+          ['$select', '$filter', '$orderby'].some(
+            (key) => url.searchParams.get(key) !== base.searchParams.get(key)
+          )
+        )
+          throw new Error(
+            'Dataverse returned an unsafe or mismatched flow continuation URL. Start a new listing.'
+          );
+        return value; // Preserve the server's paging URL and encoded skip token verbatim.
+      };
+      const pageUrl = continuation ? safeLink(continuation) : base.toString();
+      if (query.trigger.table) {
+        const metadata = await getJson<EntityMetadata>(
+          `${request.origin}/api/data/v9.2/EntityDefinitions(LogicalName='${query.trigger.table}')?$select=LogicalName,EntitySetName`
+        );
+        if (metadata.LogicalName !== query.trigger.table || !metadata.EntitySetName)
+          throw new Error(
+            'The trigger table could not be confirmed. Resolve its exact logical name first.'
+          );
+      }
+      const response = await fetch(pageUrl, {
+        credentials: 'include',
+        redirect: 'error',
+        headers: {
+          ...headers,
+          Prefer: `odata.maxpagesize=${query.pageSize}`,
+          ...(query.definitionScope === 'latest' ? { 'MSCRM.IncludeUnpublished': 'true' } : {})
+        }
+      });
+      if (!response.ok) throw new Error(await errorText(response));
+      const payload: unknown = await response.json();
+      if (
+        !object(payload) ||
+        !Array.isArray(payload.value) ||
+        payload.value.length > query.pageSize
+      )
+        throw new Error('Dataverse returned an invalid or oversized flow page.');
+      let nextCursor: string | undefined;
+      if (payload['@odata.nextLink'] != null) {
+        const nextLink = safeLink(
+          requireString(payload['@odata.nextLink'], 'Flow next link', 32_000)
+        );
+        if (nextLink === pageUrl)
+          throw new Error('Dataverse repeated the same flow page. Start a new listing.');
+        nextCursor = `flow-list-v1.${btoa(encodeURIComponent(JSON.stringify({ version: 1, origin: request.origin, query, nextLink })))}`;
+        if (nextCursor.length > 64_000)
+          throw new Error('The flow continuation cursor is too large. Start a new listing.');
+      }
+      const inspectTriggers = (record: WorkflowRecord) => {
+        const result: Array<{ summary: DataverseFlowTriggerSummary; matches: boolean }> = [];
+        let incomplete = false;
+        try {
+          if (!record.clientdata || record.clientdata.length > 1_000_000)
+            throw new Error('definition');
+          const parsed: unknown = JSON.parse(record.clientdata);
+          if (
+            !object(parsed) ||
+            !object(parsed.properties) ||
+            !object(parsed.properties.definition) ||
+            !object(parsed.properties.definition.triggers) ||
+            !Object.keys(parsed.properties.definition.triggers).length
+          )
+            throw new Error('triggers');
+          const properties = parsed.properties;
+          const references = object(properties.connectionReferences)
+            ? properties.connectionReferences
+            : {};
+          const entries = Object.entries(
+            (properties.definition as JsonObject).triggers as JsonObject
+          );
+          if (entries.length > 100) incomplete = true;
+          for (const [id, raw] of entries.slice(0, 100)) {
+            let truncated = false;
+            const text = (value: unknown): string | undefined => {
+              if (typeof value !== 'string') return undefined;
+              if (value.length > 2000) truncated = true;
+              return value.slice(0, 2000);
+            };
+            const node = object(raw) ? raw : {};
+            const inputs = object(node.inputs) ? node.inputs : {};
+            const host = object(inputs.host) ? inputs.host : {};
+            const alias = host.connectionReferenceName ?? host.connectionName;
+            const reference =
+              typeof alias === 'string' && object(references[alias]) ? references[alias] : {};
+            const api = object(reference.api) ? reference.api : {};
+            const declaredApi = host.apiId ?? api.id ?? api.name ?? reference.id;
+            const apiId = declaredApi ?? alias;
+            const connector =
+              typeof apiId === 'string' ? apiId.split('/').pop()?.toLowerCase() : undefined;
+            const identifiedConnector =
+              typeof declaredApi === 'string' || Boolean(connector?.startsWith('shared_'));
+            const operation = typeof host.operationId === 'string' ? host.operationId : undefined;
+            const summary: DataverseFlowTriggerSummary = {
+              id: id.slice(0, 200),
+              type: text(node.type) || 'unknown',
+              connector: text(connector),
+              operationId: text(operation),
+              inspection: 'other'
+            };
+            const connectorTrigger = ['OpenApiConnection', 'OpenApiConnectionWebhook'].includes(
+              summary.type
+            );
+            const dataverse =
+              connector === 'shared_commondataserviceforapps' ||
+              connector === 'shared_commondataservice';
+            let recognizedRow = false;
+            if (dataverse && operation === 'SubscribeWebhookTrigger' && connectorTrigger) {
+              recognizedRow = true;
+              const parameters = object(inputs.parameters) ? inputs.parameters : {};
+              const subscription = object(parameters.subscriptionRequest)
+                ? parameters.subscriptionRequest
+                : {};
+              const table = parameters['subscriptionRequest/entityname'] ?? subscription.entityname;
+              const message = parameters['subscriptionRequest/message'] ?? subscription.message;
+              const eventMap: Record<string, DataverseFlowEvent[]> = {
+                '1': ['create'],
+                '2': ['delete'],
+                '3': ['update'],
+                '4': ['create', 'update'],
+                '5': ['create', 'delete'],
+                '6': ['update', 'delete'],
+                '7': ['create', 'update', 'delete']
+              };
+              summary.table = text(table);
+              const messageKey =
+                typeof message === 'number' || typeof message === 'string'
+                  ? String(message).trim()
+                  : '';
+              summary.events = Object.hasOwn(eventMap, messageKey)
+                ? eventMap[messageKey]
+                : undefined;
+              const scope = parameters['subscriptionRequest/scope'] ?? subscription.scope;
+              summary.scope = typeof scope === 'number' ? scope : text(scope);
+              summary.filterExpression = text(
+                parameters['subscriptionRequest/filterexpression'] ?? subscription.filterexpression
+              );
+              summary.filteringAttributes = text(
+                parameters['subscriptionRequest/filteringattributes'] ??
+                  subscription.filteringattributes
+              );
+              summary.inspection =
+                typeof table === 'string' && /^[a-z][a-z0-9_]*$/i.test(table) && summary.events
+                  ? 'recognized'
+                  : 'unknown';
+            } else if (
+              dataverse ||
+              (connectorTrigger && (!connector || !identifiedConnector)) ||
+              (!connectorTrigger &&
+                !['Request', 'Recurrence', 'Http', 'HttpWebhook', 'SlidingWindow'].includes(
+                  summary.type
+                ))
+            ) {
+              summary.inspection = 'unknown';
+            }
+            if (Array.isArray(node.conditions)) {
+              if (node.conditions.length > 10) truncated = true;
+              summary.conditions = node.conditions.slice(0, 10).map((condition) => {
+                const serialized = JSON.stringify(condition);
+                if (serialized.length <= 2000) return condition;
+                truncated = true;
+                return serialized.slice(0, 2000);
+              });
+            }
+            if (truncated) summary.detailsTruncated = true;
+            if (summary.inspection === 'unknown') incomplete = true;
+            const matches =
+              recognizedRow &&
+              (!query.trigger.table ||
+                (typeof summary.table === 'string' &&
+                  /^[a-z][a-z0-9_]*$/i.test(summary.table) &&
+                  summary.table.toLowerCase() === query.trigger.table)) &&
+              (!query.trigger.event || Boolean(summary.events?.includes(query.trigger.event)));
+            result.push({ summary, matches });
+          }
+        } catch {
+          incomplete = true;
+        }
+        return { entries: result, incomplete };
+      };
+      const flows: DataverseFlowListItem[] = [];
+      const inspectionIssues: Array<{ workflowId?: string; name?: string; reason: string }> = [];
+      let uninspectable = 0;
+      const hasTriggerFilter = Boolean(query.trigger.table || query.trigger.event);
+      for (const value of payload.value) {
+        const record = object(value) ? (value as WorkflowRecord) : {};
+        let issue: string | undefined;
+        try {
+          const {
+            etag: _etag,
+            definition: _definition,
+            warnings: _warnings,
+            ...summary
+          } = flowDetail(record);
+          const definitionVersion =
+            record.componentstate === 0
+              ? 'published'
+              : record.componentstate === 1
+                ? 'unpublished'
+                : 'unknown';
+          const inspected = inspectTriggers(record);
+          if (inspected.incomplete)
+            issue =
+              'Trigger JSON is missing, malformed, dynamic, or uses an unsupported trigger shape; this candidate cannot be ruled out conclusively.';
+          if (definitionVersion === 'unknown')
+            issue = 'The definition version could not be confirmed.';
+          if (query.definitionScope === 'published' && definitionVersion !== 'published') {
+            issue = 'The server did not return a confirmed published definition.';
+          } else if (
+            query.filters.state &&
+            record.statecode !== { draft: 0, activated: 1, suspended: 2 }[query.filters.state]
+          ) {
+            issue = 'The returned runtime state did not match the requested state.';
+          } else if (!hasTriggerFilter || inspected.entries.some((entry) => entry.matches)) {
+            flows.push({
+              ...summary,
+              definitionVersion,
+              triggers: inspected.entries.map((entry) => entry.summary),
+              triggerInspection: inspected.incomplete ? 'incomplete' : 'complete'
+            });
+          }
+        } catch {
+          issue = 'The server returned a flow record that could not be inspected.';
+        }
+        if (issue) {
+          uninspectable++;
+          if (inspectionIssues.length < 20)
+            inspectionIssues.push({
+              workflowId: record.workflowid,
+              name: record.name,
+              reason: issue
+            });
+        }
+      }
+      const warnings = [
+        'Coverage is limited to solution-aware cloud flows readable by the signed-in user. Indirect child-flow invocations and actual run history are not inspected.',
+        query.definitionScope === 'latest'
+          ? 'Latest saved definitions can be unpublished drafts and are not proof of the currently published trigger. Use published scope with activated state for enabled-flow questions.'
+          : 'Published definitions describe configured triggers, not evidence that a particular voucher actually started a run.'
+      ];
+      if (nextCursor)
+        warnings.push(
+          'More candidate pages remain. An empty matching page does not mean no matching flows exist; continue with nextCursor and unchanged query options.'
+        );
+      if (uninspectable)
+        warnings.push(
+          'Some candidates could not be conclusively inspected. Do not claim an exhaustive negative result, even after the last page.'
+        );
+      if (flows.some((flow) => flow.triggers.some((trigger) => trigger.detailsTruncated)))
+        warnings.push(
+          'Some trigger details were truncated. Read the exact flow for its full saved definition.'
+        );
+      return {
+        ok: true,
+        action: request.action,
+        flows,
+        flowPage: {
+          definitionScope: query.definitionScope,
+          pageSize: query.pageSize,
+          scanned: payload.value.length,
+          returned: flows.length,
+          uninspectable,
+          hasMore: Boolean(nextCursor),
+          nextCursor,
+          warnings,
+          inspectionIssues
+        }
+      };
     }
     if (request.action === 'get_flow_designer_target') {
       const flow = await getFlow(request.workflowId);

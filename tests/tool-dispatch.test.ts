@@ -77,6 +77,53 @@ describe('assistant tool dispatch', () => {
     );
   });
 
+  it('forwards flow-list filters, trigger matching, sorting, and cursor without the old 50-flow clamp', async () => {
+    vi.mocked(executeFlowPrimitiveInActiveTab).mockResolvedValue({
+      ok: true,
+      action: 'list_flows',
+      flows: []
+    });
+    const options = {
+      pageSize: 100,
+      filters: { state: 'activated', isManaged: false },
+      orderBy: { field: 'name', direction: 'asc' },
+      definitionScope: 'published',
+      trigger: { table: 'cr_voucher', event: 'create' },
+      cursor: null
+    };
+    await executeAssistantTool(context, 'list_dataverse_flows', JSON.stringify(options));
+    expect(executeFlowPrimitiveInActiveTab).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({
+        action: 'list_flows',
+        origin: context.origin,
+        ...options
+      })
+    );
+    await executeAssistantTool(
+      context,
+      'list_dataverse_flows',
+      JSON.stringify({
+        pageSize: null,
+        filters: null,
+        orderBy: null,
+        definitionScope: null,
+        trigger: null,
+        cursor: 'opaque-cursor'
+      })
+    );
+    expect(executeFlowPrimitiveInActiveTab).toHaveBeenLastCalledWith(
+      context,
+      expect.objectContaining({
+        action: 'list_flows',
+        cursor: 'opaque-cursor',
+        pageSize: null,
+        filters: null,
+        definitionScope: null
+      })
+    );
+  });
+
   it.each(['create', 'update'])(
     'routes the same definition format for %s and tolerates unused null fields',
     async (operation) => {

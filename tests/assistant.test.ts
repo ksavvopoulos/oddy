@@ -192,6 +192,95 @@ describe('assistant orchestration', () => {
     expect(output).not.toContain('generatedClientData');
   });
 
+  it('keeps flow paging metadata in read-only tool outputs across an empty matching page', async () => {
+    vi.mocked(callAzureOpenAIResponses)
+      .mockResolvedValueOnce({
+        id: 'flow-page-1',
+        toolCalls: [
+          {
+            type: 'function_call',
+            call_id: 'page-1',
+            name: 'list_dataverse_flows',
+            arguments: JSON.stringify({
+              trigger: { table: 'cr_voucher', event: 'create' },
+              definitionScope: 'published'
+            })
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        id: 'flow-page-2',
+        toolCalls: [
+          {
+            type: 'function_call',
+            call_id: 'page-2',
+            name: 'list_dataverse_flows',
+            arguments: JSON.stringify({ cursor: 'opaque-next' })
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        id: 'flow-done',
+        content:
+          'One published, enabled voucher-creation trigger was found. This does not confirm a run.',
+        toolCalls: []
+      });
+    const page = {
+      definitionScope: 'published' as const,
+      pageSize: 100,
+      scanned: 100,
+      returned: 0,
+      uninspectable: 0,
+      hasMore: true,
+      nextCursor: 'opaque-next',
+      warnings: ['More candidate pages remain.'],
+      inspectionIssues: []
+    };
+    vi.mocked(executeAssistantTool)
+      .mockResolvedValueOnce({ ok: true, action: 'list_flows', flows: [], flowPage: page })
+      .mockResolvedValueOnce({
+        ok: true,
+        action: 'list_flows',
+        flowPage: { ...page, scanned: 1, returned: 1, hasMore: false, nextCursor: undefined },
+        flows: [
+          {
+            workflowId: 'flow-id',
+            name: 'Voucher creation',
+            state: 'activated',
+            isManaged: false,
+            oddyEditable: true,
+            definitionVersion: 'published',
+            triggerInspection: 'complete',
+            triggers: [
+              {
+                id: 'On_row',
+                type: 'OpenApiConnectionWebhook',
+                table: 'cr_voucher',
+                events: ['create'],
+                inspection: 'recognized'
+              }
+            ]
+          }
+        ]
+      });
+    const result = await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, false);
+    expect(executeAssistantTool).toHaveBeenCalledTimes(2);
+    expect(
+      vi
+        .mocked(executeAssistantTool)
+        .mock.calls.every(([, name]) => name === 'list_dataverse_flows')
+    ).toBe(true);
+    expect(result.pendingFlowChanges).toBeUndefined();
+    expect(result.toolsUsed?.[0]?.summary).toContain('more pages remain');
+    expect(result.toolsUsed?.[1]?.summary).toContain('last page');
+    expect(JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[1]?.[1])).toContain(
+      'opaque-next'
+    );
+    expect(JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[0]?.[1])).toContain(
+      'not a flow-name or action-text substring'
+    );
+  });
+
   it('rejects unadvertised calls before dispatch, including approval execution', async () => {
     vi.mocked(callAzureOpenAIResponses)
       .mockResolvedValueOnce({

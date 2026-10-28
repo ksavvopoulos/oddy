@@ -70,17 +70,19 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
       };
     }
     if (result.action === 'list_flows') {
+      const page = result.flowPage;
+      const matches =
+        result.flows
+          ?.map(
+            (flow) =>
+              `${flow.name} (${flow.workflowId}) · ${{ draft: 'Off', activated: 'On', suspended: 'Suspended' }[flow.state]} · ${flow.definitionVersion} definition · ${flow.triggers.map((trigger) => `${trigger.table || trigger.type}: ${trigger.events?.join('/') || trigger.operationId || 'event unknown'}`).join(', ')}`
+          )
+          .join('; ') || 'No matching flows on this page.';
       return {
         name: toolName,
         label: 'Listed solution cloud flows',
-        summary: `${result.flows?.length || 0} flow${result.flows?.length === 1 ? '' : 's'}`,
-        details:
-          result.flows
-            ?.map(
-              (flow) =>
-                `${flow.name} (${flow.workflowId}) · ${flow.state} · ${flow.oddyEditable ? 'Oddy-editable' : 'inspection only'}`
-            )
-            .join('; ') || 'No modern cloud flows found.'
+        summary: `${result.flows?.length || 0} matching flow${result.flows?.length === 1 ? '' : 's'}${page ? ` · ${page.scanned} candidates · ${page.definitionScope} · ${page.hasMore ? 'more pages remain' : 'last page'}${page.uninspectable ? ` · ${page.uninspectable} uninspectable` : ''}` : ''}`,
+        details: [matches, ...(page?.warnings || [])].join('\n')
       };
     }
     if (result.action === 'get_flow') {

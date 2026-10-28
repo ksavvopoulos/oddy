@@ -35,7 +35,7 @@ export const SKILL_TOOL_OPTIONS: Array<{
   {
     name: 'list_dataverse_flows',
     label: 'List cloud flows',
-    description: 'List solution-aware cloud flows and whether Oddy can safely edit them.'
+    description: 'Filter and page cloud flows, including exact Dataverse row-trigger matching.'
   },
   {
     name: 'get_dataverse_flow',
@@ -259,11 +259,71 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'list_dataverse_flows',
       description:
-        'List solution-aware modern cloud flows in the active Dataverse environment. Returns whether each flow is managed and whether its definition can be edited safely by Oddy.',
+        'Read-only, paged listing of accessible solution-aware cloud flows. Filter workflow fields on the server and optionally inspect native trigger JSON locally for an exact Dataverse table/event. Resolve the table logical name first; do not filter by flow name to infer which table triggers it. For enabled flows on voucher creation use definitionScope published, filters.state activated, and trigger with the resolved voucher table and event create. Combined create/update/delete triggers match every included event. Use latest scope to find drafts for editing. Runtime state draft means Off; it is separate from definitionVersion unpublished. Returns compact trigger details, conditions, scope, coverage counts, inspection issues, and nextCursor, never full definitions. pageSize counts candidate rows BEFORE trigger filtering: a page can return no matches while hasMore is true. Continue every nextCursor unchanged with other arguments null, aggregate results, and disclose incomplete coverage or uninspectable candidates. Published configuration is not execution/run-history evidence. This tool never changes flows.',
       parameters: {
         type: 'object',
         additionalProperties: false,
-        properties: { top: { type: 'integer', minimum: 1, maximum: 50 } }
+        properties: {
+          pageSize: {
+            type: ['integer', 'null'],
+            minimum: 1,
+            maximum: 100,
+            description:
+              'Candidate rows per page, not matching rows. Defaults to 100 for trigger searches, otherwise 20. Null when continuing a cursor.'
+          },
+          filters: {
+            type: ['object', 'null'],
+            additionalProperties: false,
+            properties: {
+              name: { type: ['string', 'null'] },
+              nameMatch: {
+                type: ['string', 'null'],
+                enum: ['eq', 'contains', 'starts-with', null]
+              },
+              state: {
+                type: ['string', 'null'],
+                enum: ['draft', 'activated', 'suspended', null],
+                description: 'Runtime state: draft=Off, activated=On, suspended=Suspended.'
+              },
+              isManaged: { type: ['boolean', 'null'] }
+            },
+            required: ['name', 'nameMatch', 'state', 'isManaged']
+          },
+          orderBy: {
+            type: ['object', 'null'],
+            additionalProperties: false,
+            properties: {
+              field: { type: ['string', 'null'], enum: ['name', 'modifiedon', 'statecode', null] },
+              direction: { type: ['string', 'null'], enum: ['asc', 'desc', null] }
+            },
+            required: ['field', 'direction']
+          },
+          definitionScope: {
+            type: ['string', 'null'],
+            enum: ['published', 'latest', null],
+            description:
+              'Published for enabled-trigger questions; latest (default) includes saved drafts for editing.'
+          },
+          trigger: {
+            type: ['object', 'null'],
+            additionalProperties: false,
+            properties: {
+              table: {
+                type: ['string', 'null'],
+                description:
+                  'Exact Dataverse logical table name from schema resolution, not a display name or guessed plural.'
+              },
+              event: { type: ['string', 'null'], enum: ['create', 'update', 'delete', null] }
+            },
+            required: ['table', 'event']
+          },
+          cursor: {
+            type: ['string', 'null'],
+            description:
+              'Opaque nextCursor from the prior result. Copy exactly, keep all other arguments null, and stay in the same environment.'
+          }
+        },
+        required: ['pageSize', 'filters', 'orderBy', 'definitionScope', 'trigger', 'cursor']
       }
     }
   },
