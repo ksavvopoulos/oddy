@@ -3,11 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   RecordChangeCards,
+  FlowChangeCards,
   ListMembershipCards,
   SkillChangeCards
 } from '../entrypoints/sidepanel/ApprovalCards';
 import type { ApprovalActions } from '../entrypoints/sidepanel/useApprovals';
-import { conversationFixture } from './fixtures/proposals';
+import { conversationFixture, flowProposal } from './fixtures/proposals';
 
 function approvalActions(): ApprovalActions {
   const conversation = conversationFixture();
@@ -21,9 +22,11 @@ function approvalActions(): ApprovalActions {
     bulkProgress: {},
     allowBulkWrites: true,
     mutationApprovals: conversation.mutationApprovals,
+    flowChangeApprovals: { [flowProposal.id]: { status: 'pending' } },
     listMembershipApprovals: conversation.listMembershipApprovals,
     skillChangeApprovals: conversation.skillChangeApprovals,
     setMutationApprovals: vi.fn(),
+    setFlowChangeApprovals: vi.fn(),
     setListMembershipApprovals: vi.fn(),
     setSkillChangeApprovals: vi.fn(),
     registerResponse: vi.fn(),
@@ -31,6 +34,8 @@ function approvalActions(): ApprovalActions {
     blocked: false,
     approveMutation: vi.fn(),
     rejectMutation: vi.fn(),
+    approveFlowChange: vi.fn(),
+    rejectFlowChange: vi.fn(),
     toggleMutationField: vi.fn(),
     approveListMembership: vi.fn(),
     rejectListMembership: vi.fn(),
@@ -40,10 +45,17 @@ function approvalActions(): ApprovalActions {
   };
 }
 
-for (const Component of [RecordChangeCards, ListMembershipCards, SkillChangeCards]) {
+for (const Component of [
+  RecordChangeCards,
+  FlowChangeCards,
+  ListMembershipCards,
+  SkillChangeCards
+]) {
   describe(Component.name, () => {
     it('renders a pending live preview with approval controls', () => {
-      const item = conversationFixture().transcript[1]!;
+      const base = conversationFixture().transcript[1]!;
+      const item =
+        Component === FlowChangeCards ? { ...base, pendingFlowChanges: [flowProposal] } : base;
       const html = renderToStaticMarkup(
         createElement(Component, { item, approvals: approvalActions() })
       );
@@ -53,7 +65,12 @@ for (const Component of [RecordChangeCards, ListMembershipCards, SkillChangeCard
     });
 
     it('renders restored previews as read-only', () => {
-      const item = { ...conversationFixture().transcript[1]!, historical: true };
+      const base = conversationFixture().transcript[1]!;
+      const item = {
+        ...base,
+        ...(Component === FlowChangeCards ? { pendingFlowChanges: [flowProposal] } : {}),
+        historical: true
+      };
       const html = renderToStaticMarkup(
         createElement(Component, { item, approvals: approvalActions() })
       );
@@ -62,10 +79,13 @@ for (const Component of [RecordChangeCards, ListMembershipCards, SkillChangeCard
     });
 
     it('does not offer retry controls on a failed preview', () => {
-      const item = conversationFixture().transcript[1]!;
+      const base = conversationFixture().transcript[1]!;
+      const item =
+        Component === FlowChangeCards ? { ...base, pendingFlowChanges: [flowProposal] } : base;
       const approvals = approvalActions();
       for (const states of [
         approvals.mutationApprovals,
+        approvals.flowChangeApprovals,
         approvals.listMembershipApprovals,
         approvals.skillChangeApprovals
       ]) {

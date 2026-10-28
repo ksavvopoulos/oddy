@@ -7,6 +7,7 @@ import { bulkRepository } from '../lib/bulk/repository';
 import { bulkWorkIsActive } from '../lib/bulk/engine';
 import { createDataset } from '../lib/bulk/datasets';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
+import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
 import { navigateDataverse } from '../lib/browser/navigation';
 import { refreshAfterMutation } from '../lib/browser/refresh';
 import { errorMessage } from '../lib/messages';
@@ -211,6 +212,24 @@ async function handleMessage(message: ExtensionMessage): Promise<MessageResult<u
         );
       }
       return { ok: true, data: result.listMembershipResult };
+    }
+
+    case 'EXECUTE_DATAVERSE_FLOW_CHANGE': {
+      const context = await getActiveDataverseContext({ includeUserSettings: false });
+      if (!context.origin || context.origin !== message.payload.change.environmentOrigin) {
+        throw new Error(
+          'Return to the Dataverse environment where this flow preview was prepared before approving it.'
+        );
+      }
+      const result = await executeFlowPrimitiveInActiveTab(context, {
+        action: 'execute_flow_change',
+        origin: context.origin,
+        change: message.payload.change
+      });
+      if (!result.ok || !result.flowChangeResult) {
+        throw new Error(result.error || 'Dataverse did not apply the approved cloud-flow change.');
+      }
+      return { ok: true, data: result.flowChangeResult };
     }
 
     case 'EXECUTE_DATAVERSE_MUTATION': {

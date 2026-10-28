@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeAssistantTool } from '../lib/assistant/execute-tool';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
+import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
 import {
   queryFromArguments,
   mutationValueArray,
-  skillFromToolArguments
+  skillFromToolArguments,
+  flowSpecFromArguments
 } from '../lib/assistant/arguments';
 import { SKILL_TOOL_OPTIONS } from '../lib/assistant/tool-catalog';
 import { recordProposal } from './fixtures/proposals';
 
 vi.mock('../lib/browser/primitives', () => ({ executePrimitiveInActiveTab: vi.fn() }));
+vi.mock('../lib/browser/flows', () => ({ executeFlowPrimitiveInActiveTab: vi.fn() }));
 afterEach(() => {
   vi.resetAllMocks();
 });
@@ -55,6 +58,34 @@ describe('assistant tool dispatch', () => {
     expect(executePrimitiveInActiveTab).not.toHaveBeenCalled();
   });
 
+  it('routes typed flow preparation but never flow execution from model calls', async () => {
+    vi.mocked(executeFlowPrimitiveInActiveTab).mockResolvedValue({
+      ok: false,
+      action: 'prepare_flow_change',
+      error: 'test'
+    });
+    const spec = {
+      name: 'Oddy flow',
+      connectionReferenceLogicalName: 'cr_dataverse',
+      trigger: { kind: 'manual' },
+      actions: []
+    };
+    await executeAssistantTool(
+      context,
+      'prepare_dataverse_flow_change',
+      JSON.stringify({ operation: 'create', spec })
+    );
+    expect(executeFlowPrimitiveInActiveTab).toHaveBeenCalledWith(context, {
+      action: 'prepare_flow_change',
+      origin: context.origin,
+      operation: 'create',
+      spec
+    });
+    vi.mocked(executeFlowPrimitiveInActiveTab).mockClear();
+    expect((await executeAssistantTool(context, 'execute_flow_change', '{}')).ok).toBe(false);
+    expect(executeFlowPrimitiveInActiveTab).not.toHaveBeenCalled();
+  });
+
   it('routes bulk membership preparation as one primitive', async () => {
     vi.mocked(executePrimitiveInActiveTab).mockResolvedValue({
       ok: false,
@@ -89,6 +120,14 @@ describe('assistant tool dispatch', () => {
       top: 50,
       filters: [{ column: 'emailaddress1', operator: 'eq', value: 'test@example.com' }]
     });
+    expect(
+      flowSpecFromArguments({
+        name: 'Oddy flow',
+        connectionReferenceLogicalName: 'cr_dataverse',
+        trigger: { kind: 'manual' },
+        actions: []
+      })
+    ).toMatchObject({ name: 'Oddy flow', trigger: { kind: 'manual' }, actions: [] });
     expect(
       mutationValueArray([
         { column: 'ownerid', lookup: { table: 'systemuser', recordId: 'guid' } },

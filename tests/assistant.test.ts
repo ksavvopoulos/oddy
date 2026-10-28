@@ -11,7 +11,12 @@ import {
 } from '../lib/assistant/tool-catalog';
 import { DEFAULT_SETTINGS } from '../lib/storage';
 import { BUILT_IN_SKILLS } from '../lib/skills';
-import { recordProposal, membershipProposal, skillProposal } from './fixtures/proposals';
+import {
+  recordProposal,
+  flowProposal,
+  membershipProposal,
+  skillProposal
+} from './fixtures/proposals';
 import { bulkSummary } from './fixtures/bulk';
 
 vi.mock('../lib/azure-openai', () => ({
@@ -93,6 +98,7 @@ describe('assistant orchestration', () => {
   it('collects each kind of proposal without executing its mutation', async () => {
     const calls = [
       'prepare_dataverse_record_change',
+      'prepare_dataverse_flow_change',
       'prepare_marketing_list_membership',
       'prepare_oddy_skill_change'
     ];
@@ -111,18 +117,27 @@ describe('assistant orchestration', () => {
       .mockResolvedValueOnce({ ok: true, action: 'prepare_mutation', mutation: recordProposal })
       .mockResolvedValueOnce({
         ok: true,
+        action: 'prepare_flow_change',
+        flowChange: flowProposal
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         action: 'prepare_list_membership',
         listMembership: membershipProposal
       })
       .mockResolvedValueOnce({ ok: true, action: 'prepare_skill_change', change: skillProposal });
     const result = await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, true);
     expect(result.pendingMutations).toEqual([recordProposal]);
+    expect(result.pendingFlowChanges).toEqual([flowProposal]);
     expect(result.pendingListMemberships).toEqual([membershipProposal]);
     expect(result.pendingSkillChanges).toEqual([skillProposal]);
-    expect(result.toolsUsed).toHaveLength(3);
+    expect(result.toolsUsed).toHaveLength(4);
     expect(vi.mocked(executeAssistantTool).mock.calls.map((call) => call[1])).toEqual(calls);
     expect(vi.mocked(callAzureOpenAIResponses).mock.calls[1]?.[1]).toEqual(
       expect.objectContaining({ previousResponseId: 'response-1' })
+    );
+    expect(JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[1]?.[1])).not.toContain(
+      'generatedClientData'
     );
   });
 

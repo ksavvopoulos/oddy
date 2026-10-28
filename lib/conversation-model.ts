@@ -1,5 +1,9 @@
 import type { BulkJobSummary } from './bulk/contracts';
 import type {
+  DataverseFlowChangeExecutionResult,
+  PreparedDataverseFlowChange
+} from './flows/contracts';
+import type {
   DataverseMutationExecutionResult,
   MarketingListMembershipExecutionResult,
   OddySkillChangeExecutionResult,
@@ -35,6 +39,7 @@ export interface StoredTranscriptItem {
   content: string;
   toolsUsed?: ToolActivity[];
   pendingMutations?: PreparedDataverseMutation[];
+  pendingFlowChanges?: PreparedDataverseFlowChange[];
   pendingListMemberships?: PreparedMarketingListMembership[];
   pendingSkillChanges?: PreparedOddySkillChange[];
   pendingBulkJobs?: BulkJobSummary[];
@@ -45,6 +50,8 @@ export interface StoredTranscriptItem {
 export interface StoredMutationApprovalState extends ApprovalState<DataverseMutationExecutionResult> {
   selectedColumns: string[];
 }
+
+export interface StoredFlowChangeApprovalState extends ApprovalState<DataverseFlowChangeExecutionResult> {}
 
 export interface StoredListMembershipApprovalState extends ApprovalState<MarketingListMembershipExecutionResult> {
   selectedMemberIds: string[];
@@ -65,6 +72,7 @@ export interface StoredConversation {
   tableLogicalName?: string;
   transcript: StoredTranscriptItem[];
   mutationApprovals: Record<string, StoredMutationApprovalState>;
+  flowChangeApprovals?: Record<string, StoredFlowChangeApprovalState>;
   listMembershipApprovals: Record<string, StoredListMembershipApprovalState>;
   skillChangeApprovals: Record<string, StoredSkillChangeApprovalState>;
   bulkJobApprovals?: Record<string, StoredBulkJobApprovalState>;
@@ -110,6 +118,7 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
     );
 
   const mutationApprovals = restoreApprovals(stored.mutationApprovals);
+  const flowChangeApprovals = restoreApprovals(stored.flowChangeApprovals);
   const listMembershipApprovals = restoreApprovals(stored.listMembershipApprovals);
   const skillChangeApprovals = restoreApprovals(stored.skillChangeApprovals);
   const bulkJobApprovals = restoreApprovals(stored.bulkJobApprovals);
@@ -117,6 +126,7 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
   const transcript = stored.transcript.map((item) => {
     const hasExpiredProposal =
       item.pendingMutations?.some((p) => isExpired(mutationApprovals[p.id]?.status)) ||
+      item.pendingFlowChanges?.some((p) => isExpired(flowChangeApprovals[p.id]?.status)) ||
       item.pendingListMemberships?.some((p) => isExpired(listMembershipApprovals[p.id]?.status)) ||
       item.pendingSkillChanges?.some((p) => isExpired(skillChangeApprovals[p.id]?.status)) ||
       item.pendingBulkJobs?.some((p) => isExpired(bulkJobApprovals[p.id]?.status));
@@ -137,6 +147,7 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
     ...stored,
     transcript,
     mutationApprovals,
+    flowChangeApprovals,
     listMembershipApprovals,
     skillChangeApprovals,
     bulkJobApprovals

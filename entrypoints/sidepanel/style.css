@@ -164,6 +164,7 @@ h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: -.025em; over
 .skill-change-tools, .skill-change-workflow { grid-template-columns: 1fr !important; }
 .skill-change-workflow ol { margin: 3px 0 0; padding-left: 17px; color: #444d68; }
 .skill-change-workflow li { margin: 3px 0; }
+.flow-action-spec { max-height: 160px; overflow: auto; margin: 5px 0 7px; padding: 7px; color: #525b75; background: #f6f7fb; border: 1px solid #e2e5ef; border-radius: 6px; font: 8px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .skill-delete-approve { color: white; background: #a43c48; border: 1px solid #a43c48; }
 .skill-change-card.approved { border-color: #b9dfca; }
 .skill-change-card.approved .skill-change-heading { background: #edf9f2; border-color: #cae8d6; }

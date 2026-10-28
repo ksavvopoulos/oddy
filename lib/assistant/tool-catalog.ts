@@ -33,6 +33,26 @@ export const SKILL_TOOL_OPTIONS: Array<{
     description: 'Read records from the managed personal view.'
   },
   {
+    name: 'list_dataverse_flows',
+    label: 'List cloud flows',
+    description: 'List solution-aware cloud flows and whether Oddy can safely edit them.'
+  },
+  {
+    name: 'get_dataverse_flow',
+    label: 'Read cloud flow',
+    description: 'Read a cloud flow and its typed Oddy definition when supported.'
+  },
+  {
+    name: 'list_dataverse_flow_connections',
+    label: 'List flow connections',
+    description: 'List existing Dataverse connection references available to cloud flows.'
+  },
+  {
+    name: 'prepare_dataverse_flow_change',
+    label: 'Prepare cloud-flow change',
+    description: 'Prepare a typed cloud-flow create or edit proposal that requires approval.'
+  },
+  {
     name: 'prepare_dataverse_record_change',
     label: 'Prepare record change',
     description: 'Prepare a create or update proposal that requires approval.'
@@ -108,6 +128,117 @@ const FILTER_SCHEMA = {
     }
   },
   required: ['column', 'operator']
+};
+
+const FLOW_FILTER_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    column: { type: 'string', description: 'Dataverse column logical or display name.' },
+    operator: {
+      type: 'string',
+      enum: ['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'contains', 'begins-with', 'ends-with']
+    },
+    value: { type: ['string', 'number', 'boolean', 'null'] }
+  },
+  required: ['column', 'operator', 'value']
+};
+
+const FLOW_VALUE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    kind: { type: 'string', enum: ['literal', 'trigger-column', 'action-output'] },
+    value: {
+      type: ['string', 'number', 'boolean', 'null'],
+      description: 'Required only for literal values.'
+    },
+    column: {
+      type: 'string',
+      description: 'Required for trigger-column and action-output values.'
+    },
+    actionId: {
+      type: 'string',
+      description: 'Earlier action ID, required only for action-output values.'
+    }
+  },
+  required: ['kind']
+};
+
+const FLOW_ACTION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    id: {
+      type: 'string',
+      description: 'Stable action identifier using letters, digits, and underscores.'
+    },
+    kind: { type: 'string', enum: ['list-rows', 'get-row', 'add-row', 'update-row'] },
+    table: { type: 'string', description: 'Dataverse table logical or display name.' },
+    rowId: FLOW_VALUE_SCHEMA,
+    selectColumns: { type: 'array', maxItems: 20, items: { type: 'string' } },
+    filters: { type: 'array', maxItems: 20, items: FLOW_FILTER_SCHEMA },
+    orderBy: {
+      type: 'array',
+      maxItems: 5,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          column: { type: 'string' },
+          direction: { type: 'string', enum: ['asc', 'desc'] }
+        },
+        required: ['column', 'direction']
+      }
+    },
+    top: { type: 'integer', minimum: 1, maximum: 5000 },
+    values: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 30,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          column: { type: 'string' },
+          value: FLOW_VALUE_SCHEMA
+        },
+        required: ['column', 'value']
+      }
+    }
+  },
+  required: ['id', 'kind', 'table']
+};
+
+const FLOW_SPEC_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string' },
+    description: { type: 'string' },
+    connectionReferenceLogicalName: {
+      type: 'string',
+      description: 'Exact logical name returned by list_dataverse_flow_connections.'
+    },
+    trigger: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        kind: { type: 'string', enum: ['manual', 'dataverse-row'] },
+        table: { type: 'string' },
+        change: { type: 'string', enum: ['create', 'update', 'delete'] },
+        scope: {
+          type: 'string',
+          enum: ['user', 'business-unit', 'parent-child-business-units', 'organization']
+        },
+        selectColumns: { type: 'array', maxItems: 20, items: { type: 'string' } },
+        filters: { type: 'array', maxItems: 20, items: FLOW_FILTER_SCHEMA }
+      },
+      required: ['kind']
+    },
+    actions: { type: 'array', maxItems: 20, items: FLOW_ACTION_SCHEMA }
+  },
+  required: ['name', 'connectionReferenceLogicalName', 'trigger', 'actions']
 };
 
 const ORDER_SCHEMA = {
@@ -226,6 +357,64 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
           top: { type: 'integer', minimum: 1, maximum: 50 }
         },
         required: ['table']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_dataverse_flows',
+      description:
+        'List solution-aware modern cloud flows in the active Dataverse environment. Returns whether each flow is managed and whether its definition can be edited safely by Oddy.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { top: { type: 'integer', minimum: 1, maximum: 50 } }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_dataverse_flow',
+      description:
+        'Read one modern cloud flow by exact workflow ID. Oddy-created flows include a complete typed specification that must be preserved and revised for edits. Other flows are inspection-only.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { workflowId: { type: 'string' } },
+        required: ['workflowId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_dataverse_flow_connections',
+      description:
+        'List existing Microsoft Dataverse connection references available for cloud-flow creation. Use the exact logical name in a flow specification; never invent a connection reference.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { top: { type: 'integer', minimum: 1, maximum: 100 } }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'prepare_dataverse_flow_change',
+      description:
+        'Prepare, but never execute, a typed Dataverse-only cloud-flow create or update. For updates, read the exact flow first and submit its complete revised specification. V1 supports manual or Dataverse row triggers and sequential list/get/add/update row actions with scalar text, number, boolean, date, GUID, trigger-column, or earlier single-row output values. Choice, lookup, collection-to-scalar, and arbitrary expression writes are rejected. New flows are created Off in the default solution. Only Oddy-created unmanaged flows can be edited.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          operation: { type: 'string', enum: ['create', 'update'] },
+          workflowId: { type: 'string', description: 'Required for update.' },
+          spec: FLOW_SPEC_SCHEMA
+        },
+        required: ['operation', 'spec']
       }
     }
   },

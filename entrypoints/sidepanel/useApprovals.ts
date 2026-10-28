@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BulkJobSummary } from '../../lib/bulk/contracts';
+import type {
+  DataverseFlowChangeExecutionResult,
+  PreparedDataverseFlowChange
+} from '../../lib/flows/contracts';
 import { bulkAudit, executeApprovedBulkJob } from '../../lib/bulk/client';
 import type { Dispatch, SetStateAction } from 'react';
 import { canEditApproval, createApprovalExecutor, toggleSelection } from '../../lib/approvals';
@@ -12,6 +16,7 @@ import type {
   ApprovalState,
   StoredTranscriptItem,
   StoredMutationApprovalState,
+  StoredFlowChangeApprovalState,
   StoredListMembershipApprovalState,
   StoredSkillChangeApprovalState,
   StoredBulkJobApprovalState
@@ -30,7 +35,11 @@ import type {
 } from '../../lib/types';
 
 type ProposalKind =
-  'pendingMutations' | 'pendingListMemberships' | 'pendingSkillChanges' | 'pendingBulkJobs';
+  | 'pendingMutations'
+  | 'pendingFlowChanges'
+  | 'pendingListMemberships'
+  | 'pendingSkillChanges'
+  | 'pendingBulkJobs';
 type StateMap<State> = Record<string, State>;
 
 /** One lifecycle for all approval kinds; adapters below supply only domain-specific details. */
@@ -199,6 +208,27 @@ export function useApprovals(options: {
       continueBusinessRequest('pendingMutations', proposal.id, activity);
     }
   });
+  const flows = useApprovalQueue<
+    PreparedDataverseFlowChange,
+    DataverseFlowChangeExecutionResult,
+    StoredFlowChangeApprovalState
+  >({
+    name: 'execute_dataverse_flow_change',
+    blocked: options.blocked,
+    initial: () => ({ status: 'pending' }),
+    request: (change) => ({ type: 'EXECUTE_DATAVERSE_FLOW_CHANGE', payload: { change } }),
+    successActivity: (result) => ({
+      label: 'Applied approved cloud-flow change',
+      summary: `${result.name} was ${result.operation === 'create' ? 'created' : 'updated'} · ${result.state}`,
+      details: JSON.stringify(result)
+    }),
+    failureLabel: 'Approved cloud-flow change failed',
+    isHistorical: isHistorical('pendingFlowChanges'),
+    activity: activity('pendingFlowChanges'),
+    afterSuccess: (proposal, _result, activity) => {
+      continueBusinessRequest('pendingFlowChanges', proposal.id, activity);
+    }
+  });
   const memberships = useApprovalQueue<
     PreparedMarketingListMembership,
     MarketingListMembershipExecutionResult,
@@ -313,24 +343,30 @@ export function useApprovals(options: {
     bulkProgress,
     mutationApprovals: mutations.states,
     setMutationApprovals: mutations.setStates,
+    flowChangeApprovals: flows.states,
+    setFlowChangeApprovals: flows.setStates,
     listMembershipApprovals: memberships.states,
     setListMembershipApprovals: memberships.setStates,
     skillChangeApprovals: skills.states,
     setSkillChangeApprovals: skills.setStates,
     approving: [
       ...Object.values(mutations.states),
+      ...Object.values(flows.states),
       ...Object.values(memberships.states),
       ...Object.values(skills.states),
       ...Object.values(bulk.states)
     ].some((state) => state.status === 'approving'),
     registerResponse: (response: LlmResponse) => {
       mutations.register(response.pendingMutations);
+      flows.register(response.pendingFlowChanges);
       memberships.register(response.pendingListMemberships);
       skills.register(response.pendingSkillChanges);
       bulk.register(response.pendingBulkJobs);
     },
     approveMutation: mutations.approve,
     rejectMutation: mutations.reject,
+    approveFlowChange: flows.approve,
+    rejectFlowChange: flows.reject,
     approveListMembership: memberships.approve,
     rejectListMembership: memberships.reject,
     approveSkillChange: skills.approve,

@@ -8,31 +8,32 @@ Oddy is a Manifest V3 extension with three execution environments. Keep their bo
 
 ## Module map
 
-| Area                         | Files                                                                               | Responsibility                                                                                                                                   |
-| ---------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Background entry point       | `entrypoints/background.ts`                                                         | Register Chrome listeners and route extension messages. Keep business logic elsewhere.                                                           |
-| Assistant catalog            | `lib/assistant/tool-catalog.ts`                                                     | Function schemas, skill-builder choices, and request-specific tool selection.                                                                    |
-| Assistant loop               | `lib/assistant/run.ts`                                                              | Responses API continuation, allowlist enforcement, proposal collection, tool audits.                                                             |
-| Tool dispatch                | `lib/assistant/execute-tool.ts`, `arguments.ts`, `contracts.ts`                     | Parse model arguments and map allowed operations to typed primitives.                                                                            |
-| Audit presentation           | `lib/assistant/activity.ts`                                                         | Summarize tool results without mixing UI text into executors.                                                                                    |
-| Browser integration          | `lib/browser/`                                                                      | Active-tab checks, context extraction, native navigation/fallback, refresh, script injection.                                                    |
-| Dataverse contracts          | `lib/dataverse/contracts.ts`                                                        | Requests, query/filter types, resolved metadata, and primitive results.                                                                          |
-| Dataverse execution          | `lib/dataverse-primitives.ts`                                                       | Self-contained page executor. Metadata validation, reads, previews, and approved writes. Re-exports existing contract imports for compatibility. |
-| Bulk execution/workspace     | `lib/bulk/`, `lib/browser/bulk.ts`                                                  | Typed plans, local datasets/rows, paged preparation, counts, checkpointed runner, signed-session batch transport, recovery.                      |
-| Bulk UI                      | `entrypoints/sidepanel/BulkJobCards.tsx`, `BulkWorkspace.tsx`                       | Frozen-scope approval, permission acknowledgement, paginated inspection, progress, upload, and recovery.                                         |
-| Shared application contracts | `lib/types.ts`                                                                      | Extension messages, settings, model responses, proposal/result types.                                                                            |
-| Conversation model           | `lib/conversation-model.ts`                                                         | Shared transcript/approval types, authoritative audit serialization, read-only restoration. No React or IndexedDB dependency.                    |
-| History repository           | `lib/conversations.ts`                                                              | IndexedDB connection/transaction handling and CRUD. Existing store name, version, and data shape are unchanged.                                  |
-| History policy               | `lib/history-policy.ts`                                                             | Defaults, limits, and expiration/count decisions shared by settings and persistence.                                                             |
-| Approval rules               | `lib/approvals.ts`                                                                  | Editability, display status, immutable selection, synchronous execution lock. No React or Chrome dependency.                                     |
-| Approval adapters            | `entrypoints/sidepanel/useApprovals.ts`                                             | One queue lifecycle with domain-specific messages and result audits for records, memberships, and skills.                                        |
-| Transcript UI                | `entrypoints/sidepanel/TranscriptMessage.tsx`, `ApprovalCards.tsx`, `formatting.ts` | Render messages and proposals; no mutation execution in rendering.                                                                               |
-| UI composition               | `entrypoints/sidepanel/App.tsx`                                                     | Context, request submission, history lifecycle, and page composition.                                                                            |
-| Skills                       | `lib/skills.ts`                                                                     | Built-in workflows, custom-skill validation/storage/revision checks, export. Uses the shared tool catalog.                                       |
+| Area                           | Files                                                                               | Responsibility                                                                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Background entry point         | `entrypoints/background.ts`                                                         | Register Chrome listeners and route extension messages. Keep business logic elsewhere.                                                           |
+| Assistant catalog              | `lib/assistant/tool-catalog.ts`                                                     | Function schemas, skill-builder choices, and request-specific tool selection.                                                                    |
+| Assistant loop                 | `lib/assistant/run.ts`                                                              | Responses API continuation, allowlist enforcement, proposal collection, tool audits.                                                             |
+| Tool dispatch                  | `lib/assistant/execute-tool.ts`, `arguments.ts`, `contracts.ts`                     | Parse model arguments and map allowed operations to typed primitives.                                                                            |
+| Audit presentation             | `lib/assistant/activity.ts`                                                         | Summarize tool results without mixing UI text into executors.                                                                                    |
+| Browser integration            | `lib/browser/`                                                                      | Active-tab checks, context extraction, native navigation/fallback, refresh, script injection.                                                    |
+| Dataverse contracts            | `lib/dataverse/contracts.ts`                                                        | Requests, query/filter types, resolved metadata, and primitive results.                                                                          |
+| Dataverse execution            | `lib/dataverse-primitives.ts`                                                       | Self-contained page executor. Metadata validation, reads, previews, and approved writes. Re-exports existing contract imports for compatibility. |
+| Cloud-flow contracts/execution | `lib/flows/`, `lib/dataverse-flow-primitives.ts`, `lib/browser/flows.ts`            | Typed Dataverse-only flow graph, metadata normalization, definition compilation, inspection, stale-preview protection, and approved writes.      |
+| Bulk execution/workspace       | `lib/bulk/`, `lib/browser/bulk.ts`                                                  | Typed plans, local datasets/rows, paged preparation, counts, checkpointed runner, signed-session batch transport, recovery.                      |
+| Bulk UI                        | `entrypoints/sidepanel/BulkJobCards.tsx`, `BulkWorkspace.tsx`                       | Frozen-scope approval, permission acknowledgement, paginated inspection, progress, upload, and recovery.                                         |
+| Shared application contracts   | `lib/types.ts`                                                                      | Extension messages, settings, model responses, proposal/result types.                                                                            |
+| Conversation model             | `lib/conversation-model.ts`                                                         | Shared transcript/approval types, authoritative audit serialization, read-only restoration. No React or IndexedDB dependency.                    |
+| History repository             | `lib/conversations.ts`                                                              | IndexedDB connection/transaction handling and CRUD. Existing store name, version, and data shape are unchanged.                                  |
+| History policy                 | `lib/history-policy.ts`                                                             | Defaults, limits, and expiration/count decisions shared by settings and persistence.                                                             |
+| Approval rules                 | `lib/approvals.ts`                                                                  | Editability, display status, immutable selection, synchronous execution lock. No React or Chrome dependency.                                     |
+| Approval adapters              | `entrypoints/sidepanel/useApprovals.ts`                                             | One queue lifecycle with domain-specific messages and result audits for records, memberships, and skills.                                        |
+| Transcript UI                  | `entrypoints/sidepanel/TranscriptMessage.tsx`, `ApprovalCards.tsx`, `formatting.ts` | Render messages and proposals; no mutation execution in rendering.                                                                               |
+| UI composition                 | `entrypoints/sidepanel/App.tsx`                                                     | Context, request submission, history lifecycle, and page composition.                                                                            |
+| Skills                         | `lib/skills.ts`                                                                     | Built-in workflows, custom-skill validation/storage/revision checks, export. Uses the shared tool catalog.                                       |
 
 ## Approval boundary
 
-The model sees **preparation** tools, not execution tools. Preparation may read metadata and records but must not write business records, memberships, or custom skills.
+The model sees **preparation** tools, not execution tools. Preparation may read metadata and records but must not write business records, cloud-flow definitions, memberships, or custom skills.
 
 ```text
 user request → allowed model tool → validated preview → approval card
@@ -43,12 +44,29 @@ background execution message → environment/metadata revalidation → write
 ```
 
 - Personal `AI Result` view management remains the existing explicitly exposed tool exception; it is not a general business-record mutation tool.
+- Cloud-flow tools expose summaries and typed graphs, never raw model-authored `workflow.clientdata`. Prepared definitions are retained locally for approval execution and stripped from model-facing tool output.
 - The assistant loop rejects unadvertised tool calls **before dispatch**, even if the model emits a syntactically valid function call.
 - Pending is the only editable/executable approval status. An in-flight lock is acquired synchronously before an async request starts.
 - Failed, rejected, completed, and historical proposals cannot execute through the shared approval lifecycle. Corrections need a new preview and fresh approval.
 - Restored items are always historical. Interrupted `approving` states become expired pending previews, never presumed successes.
 - The side panel disables conversation switching and new submissions during approval execution so outcomes stay with their originating conversation.
 - These checks protect the supported extension flow; they are not a substitute for server-side authorization. Dataverse permissions still apply.
+
+## Typed cloud-flow primitives
+
+Modern cloud flows are read and written through the signed-in Dataverse `workflows` endpoint. `lib/dataverse-flow-primitives.ts` is a separate self-contained MAIN-world executor because flow compilation and workflow-table validation are a distinct domain from generic record mutation.
+
+The model can list flows, read one flow, list existing Dataverse connection references, and prepare a typed create/update. The V1 graph supports manual or Dataverse row triggers and a sequential chain of list/get/add/update-row actions. Table and column names are normalized from metadata, write columns are checked for create/update validity, action references must point backward, and collection outputs cannot be silently treated as scalar values. The compiler owns connector operation IDs, Logic Apps expression serialization, `clientdata`, and the Oddy ownership marker.
+
+```text
+model: typed graph → metadata/connection validation → compiled definition
+                                                          ↓ local only
+                                             semantic approval card
+                                                          ↓ approval
+page: revalidate graph + connection + environment → ETag check → POST/PATCH workflow
+```
+
+Creation uses documented modern-flow fields (`category=5`, `type=1`, `primaryentity=none`) and leaves the new flow Draft/Off. Updates are limited to unmanaged flows carrying Oddy's typed marker; arbitrary existing `clientdata`, managed flows, and unknown graph shapes are inspection-only. Approved updates re-read the workflow and require the exact prepared ETag before `PATCH`. Activation is intentionally separate future authority and is never bundled into a definition create/edit.
 
 ## Bulk jobs: data plane versus model context
 
@@ -111,7 +129,7 @@ Native `CreateMultiple`/`UpdateMultiple` optimization and a separately authentic
 5. Route the explicit execution message in `entrypoints/background.ts`; recheck the active environment before injection. Never add this execution message to the model catalog.
 6. For a new approval kind, add a typed adapter in `useApprovals.ts` and its card in `ApprovalCards.tsx`. Extend the shared conversation model and restoration together. Older saved histories must remain readable.
 7. Add a workflow in `lib/skills.ts` only if it provides a useful guided path. Skills declare tool access; they cannot bypass consent or approval.
-8. Add tests for valid preview/execution, wrong environment, stale metadata, failures, selection limits, and restored read-only cards.
+8. Add tests for valid preview/execution, wrong environment, stale metadata, failures, selection limits, restored read-only cards, and MAIN-world serialization. Flow capabilities additionally need compiler-output, connection-reference, managed-flow, unsupported-definition, and ETag tests.
 9. Bump the package version with `npm version <version> --no-git-tag-version`. Build and verify `.output/chrome-mv3/manifest.json` matches `package.json`.
 
 ## Continuing after an approval
@@ -156,6 +174,7 @@ npm run check
 Tests are divided by boundary:
 
 - `dataverse-tools.test.ts`: signed-session API request/response behavior, including Choice, lookup, bulk action, and XML metadata headers.
+- `dataverse-flow-tools.test.ts`: modern-flow listing, typed compilation, approval-only creation, connection references, and stale ETag rejection.
 - `assistant.test.ts`: tool selection, allowlist rejection, proposal collection, continuation, and loop limits using mocked provider/browser seams.
 - `tool-dispatch.test.ts`: argument parsing and preparation-only routing.
 - `approvals.test.ts`: lifecycle rules, duplicate execution, failures, and history guards without React.
@@ -181,16 +200,17 @@ No test needs live credentials or a Dataverse tenant. That also means tests do *
 
 1. Load `.output/chrome-mv3`, open a Dataverse app, and verify context detection.
 2. Query records, create/update `AI Result`, and navigate to a record.
-3. Prepare a record change; deselect/reselect fields; reject it. Prepare another and approve it.
-4. Ask to create a static marketing list and add contacts created in the last 30 days. Approve creation; Oddy should automatically use the saved list ID and prepare the matching members. Approve membership separately and verify bounded `AddListMembersList` chunks for the frozen matching selection, never per-contact writes. Check dynamic-list rejection.
-5. Trigger an execution failure and confirm the next assistant turn receives the exact audit error and requires a fresh preview.
-6. Enable local history; resume a conversation. Old cards must have no approval buttons; new requests must still work. Delete a conversation and clear all.
-7. Verify a custom-skill change still requires approval and bundled skills remain immutable.
-8. In a test environment, prepare an update over thousands of contacts using a dedicated test field. Inspect multiple local pages, reject once, then prepare again. Change a selected row externally before approval and verify a conflict stops later chunks with accurate partial counts.
-9. Prepare contact case counts using the explicitly selected Customer or Primary Contact relationship. Verify active/all-case filtering, typed contact-versus-account lookups, zero-case contacts, the permission-scope acknowledgement, and independent manual counts.
-10. Upload a small CSV/JSON dataset, inspect mappings, approve creates, and verify reserved GUIDs. Simulate a lost chunk response or panel close; prepare remaining work and verify no successful record is recreated. Start small before scaling to thousands.
-11. Close/reopen the panel during a bulk job; no writes may restart automatically. Use Bulk workspace to inspect progress and explicitly prepare/approve remaining work. Verify history restoration and workspace clearing cannot trigger writes.
+3. List flow connection references, prepare a manual Dataverse list-rows flow, inspect its full typed approval card, approve it, and verify it is created Off. Read it back, prepare a rename, alter it externally before approval, and verify the stale update is refused.
+4. Prepare a record change; deselect/reselect fields; reject it. Prepare another and approve it.
+5. Ask to create a static marketing list and add contacts created in the last 30 days. Approve creation; Oddy should automatically use the saved list ID and prepare the matching members. Approve membership separately and verify bounded `AddListMembersList` chunks for the frozen matching selection, never per-contact writes. Check dynamic-list rejection.
+6. Trigger an execution failure and confirm the next assistant turn receives the exact audit error and requires a fresh preview.
+7. Enable local history; resume a conversation. Old cards must have no approval buttons; new requests must still work. Delete a conversation and clear all.
+8. Verify a custom-skill change still requires approval and bundled skills remain immutable.
+9. In a test environment, prepare an update over thousands of contacts using a dedicated test field. Inspect multiple local pages, reject once, then prepare again. Change a selected row externally before approval and verify a conflict stops later chunks with accurate partial counts.
+10. Prepare contact case counts using the explicitly selected Customer or Primary Contact relationship. Verify active/all-case filtering, typed contact-versus-account lookups, zero-case contacts, the permission-scope acknowledgement, and independent manual counts.
+11. Upload a small CSV/JSON dataset, inspect mappings, approve creates, and verify reserved GUIDs. Simulate a lost chunk response or panel close; prepare remaining work and verify no successful record is recreated. Start small before scaling to thousands.
+12. Close/reopen the panel during a bulk job; no writes may restart automatically. Use Bulk workspace to inspect progress and explicitly prepare/approve remaining work. Verify history restoration and workspace clearing cannot trigger writes.
 
 ## Scope of this refactor
 
-The original module split preserves existing histories and primitive behavior. Version 0.11 adds typed bulk-job preparation, a separate temporary workspace, optional bulk history fields, and approval-gated chunk execution; it does not introduce arbitrary actions, codemode, broader skill allowlists, changed consent defaults, or a larger outbound history window. Native bulk-message optimization and unattended server execution remain separate future capabilities.
+The original module split preserves existing histories and primitive behavior. Version 0.12 adds typed, approval-gated Dataverse cloud-flow creation and editing for a deliberately constrained graph. It does not introduce raw `clientdata`, arbitrary expressions/actions, automatic activation, connection creation, codemode, changed consent defaults, or a larger outbound history window. Broader connector/graph support, native bulk-message optimization, and unattended server execution remain separate future capabilities.

@@ -3,6 +3,7 @@ import type {
   PreparedMarketingListMembership,
   PreparedOddySkillChange
 } from '../../lib/types';
+import type { PreparedDataverseFlowChange } from '../../lib/flows/contracts';
 import type { StoredConversation } from '../../lib/conversation-model';
 
 export const recordProposal: PreparedDataverseMutation = {
@@ -39,6 +40,28 @@ export const membershipProposal: PreparedMarketingListMembership = {
       { name: 'Members', type: 'Collection(mscrm.crmbaseentity)' }
     ]
   }
+};
+
+export const flowProposal: PreparedDataverseFlowChange = {
+  id: 'flow-proposal',
+  operation: 'create',
+  environmentOrigin: recordProposal.environmentOrigin,
+  after: {
+    name: 'Oddy test flow',
+    connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+    trigger: { kind: 'manual' },
+    actions: [
+      {
+        id: 'List_accounts',
+        kind: 'list-rows',
+        table: 'account',
+        selectColumns: ['name'],
+        top: 1
+      }
+    ]
+  },
+  generatedClientData: '{"test":true}',
+  warnings: ['The new flow will remain Off until it is activated separately.']
 };
 
 export const skillProposal: PreparedOddySkillChange = {

@@ -117,6 +117,112 @@ export function RecordChangeCards({ item, approvals }: Props) {
   );
 }
 
+export function FlowChangeCards({ item, approvals }: Props) {
+  const { flowChangeApprovals, rejectFlowChange, approveFlowChange } = approvals;
+  return (
+    <>
+      {item.pendingFlowChanges && item.pendingFlowChanges.length > 0 && (
+        <div className="mutation-list">
+          {item.pendingFlowChanges.map((change) => {
+            const approval = flowChangeApprovals[change.id] || { status: 'pending' as const };
+            const editable = !approvals.blocked && canEditApproval(approval, item.historical);
+            const trigger =
+              change.after.trigger.kind === 'manual'
+                ? 'Manual button trigger'
+                : `${change.after.trigger.change} on ${change.after.trigger.table} · ${change.after.trigger.scope}`;
+            return (
+              <section key={change.id} className={`mutation-card ${approval.status}`}>
+                <div className="mutation-heading">
+                  <div>
+                    <strong>
+                      {change.operation === 'create' ? 'Create' : 'Update'} cloud flow
+                    </strong>
+                    <small>{change.after.name}</small>
+                  </div>
+                  <span>{approvalStatusLabel(approval, item.historical)}</span>
+                </div>
+
+                <div className="skill-change-details">
+                  {change.before && (
+                    <div className="skill-change-tools">
+                      <span>Current flow</span>
+                      <small>
+                        {change.before.name} · {change.before.state} · {change.before.workflowId}
+                      </small>
+                    </div>
+                  )}
+                  <div className="skill-change-tools">
+                    <span>Trigger</span>
+                    <small>{trigger}</small>
+                    <pre className="flow-action-spec">
+                      {JSON.stringify(change.after.trigger, null, 2)}
+                    </pre>
+                  </div>
+                  <div className="skill-change-tools">
+                    <span>Connection reference</span>
+                    <small>{change.after.connectionReferenceLogicalName}</small>
+                  </div>
+                  <div className="skill-change-workflow">
+                    <span>Sequential actions</span>
+                    <ol>
+                      {change.after.actions.map((action) => (
+                        <li key={action.id}>
+                          <strong>{action.id}</strong>: {action.kind} on {action.table}
+                          <pre className="flow-action-spec">{JSON.stringify(action, null, 2)}</pre>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                  {change.warnings.map((warning) => (
+                    <p key={warning} className="mutation-note">
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+
+                <p className="mutation-note">
+                  {item.historical
+                    ? 'This historical flow preview cannot be applied. Prepare a fresh preview to continue.'
+                    : 'Oddy will write only this validated flow definition. Connection credentials are not changed.'}
+                </p>
+                {approval.error && <p className="mutation-error">{approval.error}</p>}
+                {approval.status === 'approved' && approval.result && (
+                  <p className="mutation-success">
+                    {approval.result.name} was{' '}
+                    {approval.result.operation === 'create' ? 'created' : 'updated'} and is{' '}
+                    {approval.result.state}.
+                  </p>
+                )}
+                {editable && (
+                  <div className="mutation-actions">
+                    <button
+                      type="button"
+                      className="mutation-reject"
+                      onClick={() => rejectFlowChange(change.id)}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      className="mutation-approve"
+                      onClick={() => void approveFlowChange(change)}
+                    >
+                      Approve {change.operation}
+                    </button>
+                  </div>
+                )}
+                {approval.status === 'approving' && (
+                  <p className="mutation-applying">Applying approved cloud-flow change…</p>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function ListMembershipCards({ item, approvals }: Props) {
   const {
     listMembershipApprovals,

@@ -1,0 +1,293 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { executeDataverseFlowPrimitive } from '../lib/dataverse-flow-primitives';
+
+const origin = 'https://contoso.crm.dynamics.com';
+const connectionReferences = {
+  value: [
+    {
+      connectionreferencelogicalname: 'cr_sharedcommondataserviceforapps',
+      connectionreferencedisplayname: 'Dataverse connection',
+      connectorid: '/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps',
+      connectionid: 'shared-connection-id',
+      ismanaged: false
+    }
+  ]
+};
+const accountEntity = {
+  LogicalName: 'account',
+  EntitySetName: 'accounts',
+  PrimaryIdAttribute: 'accountid'
+};
+const accountAttributes = {
+  value: [
+    {
+      LogicalName: 'name',
+      AttributeType: 'String',
+      IsValidForRead: true,
+      IsValidForCreate: true,
+      IsValidForUpdate: true
+    },
+    {
+      LogicalName: 'accountid',
+      AttributeType: 'Uniqueidentifier',
+      IsValidForRead: true,
+      IsValidForCreate: false,
+      IsValidForUpdate: false
+    }
+  ]
+};
+
+function response(body: unknown, status = 200, headers?: HeadersInit) {
+  return new Response(body === undefined ? null : JSON.stringify(body), { status, headers });
+}
+
+function manualClientData(spec: {
+  name: string;
+  connectionReferenceLogicalName: string;
+  trigger: { kind: 'manual' };
+  actions: unknown[];
+}) {
+  return JSON.stringify({
+    properties: {
+      connectionReferences: {
+        shared_commondataserviceforapps: {
+          runtimeSource: 'embedded',
+          connection: {
+            connectionReferenceLogicalName: spec.connectionReferenceLogicalName
+          },
+          api: { name: 'shared_commondataserviceforapps' }
+        }
+      },
+      definition: {
+        triggers: {
+          manual: {
+            metadata: { oddy: { schemaVersion: 1, spec } },
+            type: 'Request',
+            kind: 'Button',
+            inputs: { schema: { type: 'object', properties: {}, required: [] } }
+          }
+        },
+        actions: {}
+      }
+    }
+  });
+}
+
+beforeEach(() => vi.stubGlobal('window', { location: { origin } }));
+afterEach(() => vi.unstubAllGlobals());
+
+describe('Dataverse cloud-flow primitives', () => {
+  it('lists modern flows without exposing clientdata', async () => {
+    const clientdata = manualClientData({
+      name: 'Oddy flow',
+      connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+      trigger: { kind: 'manual' },
+      actions: []
+    });
+    const externallyChanged = JSON.parse(clientdata);
+    externallyChanged.properties.definition.triggers.manual.kind = 'Http';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        response({
+          value: [
+            {
+              workflowid: '00000000-0000-0000-0000-000000000010',
+              name: 'Oddy flow',
+              statecode: 0,
+              ismanaged: false,
+              clientdata,
+              '@odata.etag': 'W/"10"'
+            },
+            {
+              workflowid: '00000000-0000-0000-0000-000000000011',
+              name: 'Existing flow',
+              statecode: 1,
+              ismanaged: false,
+              clientdata: JSON.stringify(externallyChanged)
+            }
+          ]
+        })
+      )
+    );
+
+    const result = await executeDataverseFlowPrimitive({
+      action: 'list_flows',
+      origin,
+      top: 20
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.flows).toEqual([
+      expect.objectContaining({ name: 'Oddy flow', state: 'draft', oddyEditable: true }),
+      expect.objectContaining({ name: 'Existing flow', state: 'activated', oddyEditable: false })
+    ]);
+    expect(JSON.stringify(result)).not.toContain('clientdata');
+  });
+
+  it('prepares and creates a typed Dataverse-only flow after approval', async () => {
+    const workflowId = '00000000-0000-0000-0000-000000000012';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(response(accountEntity))
+      .mockResolvedValueOnce(response(accountAttributes))
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(response(accountEntity))
+      .mockResolvedValueOnce(response(accountAttributes))
+      .mockResolvedValueOnce(
+        response(undefined, 204, {
+          'OData-EntityId': `${origin}/api/data/v9.2/workflows(${workflowId})`
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const prepared = await executeDataverseFlowPrimitive({
+      action: 'prepare_flow_change',
+      origin,
+      operation: 'create',
+      spec: {
+        name: 'List one account',
+        description: 'Created by Oddy',
+        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+        trigger: { kind: 'manual' },
+        actions: [
+          {
+            id: 'List_accounts',
+            kind: 'list-rows',
+            table: 'Accounts',
+            selectColumns: ['Name'],
+            top: 1
+          }
+        ]
+      }
+    });
+
+    expect(prepared.ok).toBe(true);
+    expect(prepared.flowChange?.after.actions[0]).toEqual(
+      expect.objectContaining({ table: 'account', selectColumns: ['name'] })
+    );
+    expect(prepared.flowChange?.warnings.join(' ')).toContain('remain Off');
+
+    const applied = await executeDataverseFlowPrimitive({
+      action: 'execute_flow_change',
+      origin,
+      change: prepared.flowChange!
+    });
+
+    expect(applied.flowChangeResult).toEqual({
+      operation: 'create',
+      workflowId,
+      name: 'List one account',
+      state: 'draft'
+    });
+    const createCall = fetchMock.mock.calls[6]!;
+    expect(createCall[1]?.method).toBe('POST');
+    const body = JSON.parse(String(createCall[1]?.body));
+    expect(body).toMatchObject({ category: 5, type: 1, primaryentity: 'none' });
+    const clientdata = JSON.parse(body.clientdata);
+    expect(
+      clientdata.properties.connectionReferences.shared_commondataserviceforapps.connection
+        .connectionReferenceLogicalName
+    ).toBe('cr_sharedcommondataserviceforapps');
+    expect(clientdata.properties.definition.actions.List_accounts.inputs.host.operationId).toBe(
+      'ListRecords'
+    );
+    expect(clientdata.properties.definition.actions.List_accounts.inputs.parameters).toEqual({
+      entityName: 'account',
+      $select: 'name',
+      $top: 1
+    });
+  });
+
+  it('rejects unsupported lookup writes instead of emitting invalid connector payloads', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(response(accountEntity))
+      .mockResolvedValueOnce(
+        response({
+          value: [
+            {
+              LogicalName: 'primarycontactid',
+              AttributeType: 'Lookup',
+              IsValidForRead: true,
+              IsValidForCreate: true,
+              IsValidForUpdate: true
+            }
+          ]
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeDataverseFlowPrimitive({
+      action: 'prepare_flow_change',
+      origin,
+      operation: 'create',
+      spec: {
+        name: 'Unsupported lookup flow',
+        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+        trigger: { kind: 'manual' },
+        actions: [
+          {
+            id: 'Create_account',
+            kind: 'add-row',
+            table: 'account',
+            values: [
+              {
+                column: 'primarycontactid',
+                value: { kind: 'literal', value: '00000000-0000-0000-0000-000000000099' }
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('unsupported flow-write type Lookup');
+  });
+
+  it('rejects a stale Oddy-created flow update', async () => {
+    const workflowId = '00000000-0000-0000-0000-000000000013';
+    const spec = {
+      name: 'Oddy flow',
+      connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+      trigger: { kind: 'manual' as const },
+      actions: []
+    };
+    const clientdata = manualClientData(spec);
+    const flow = {
+      workflowid: workflowId,
+      name: spec.name,
+      statecode: 1,
+      ismanaged: false,
+      clientdata,
+      '@odata.etag': 'W/"1"'
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(response(flow))
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(response({ ...flow, '@odata.etag': 'W/"2"' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const prepared = await executeDataverseFlowPrimitive({
+      action: 'prepare_flow_change',
+      origin,
+      operation: 'update',
+      workflowId,
+      spec: { ...spec, name: 'Renamed Oddy flow' }
+    });
+    const applied = await executeDataverseFlowPrimitive({
+      action: 'execute_flow_change',
+      origin,
+      change: prepared.flowChange!
+    });
+
+    expect(applied.ok).toBe(false);
+    expect(applied.error).toContain('changed after this preview');
+    expect(fetchMock.mock.calls.some((call) => call[1]?.method === 'PATCH')).toBe(false);
+  });
+});

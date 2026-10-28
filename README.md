@@ -13,7 +13,9 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 - Protects skill edits with revision checks and keeps bundled skills immutable
 - Restricts each active skill to its declared Dataverse tools and validates required inputs before execution
 - Exports standard `SKILL.md` instructions alongside an Oddy workflow JSON definition
-- Gives Azure OpenAI composable schema/query/navigation tools and preparation-only bulk-job tools, without exposing write execution
+- Gives Azure OpenAI composable schema/query/navigation tools, typed cloud-flow primitives, and preparation-only bulk-job tools, without exposing write execution
+- Lists modern cloud flows and existing Dataverse connection references, reads supported typed definitions, and prepares approval-gated flow creates or edits
+- Creates Dataverse-only flows from a constrained graph of manual/row triggers and sequential list/get/add/update-row actions; new flows remain Off by default
 - Uses a shared structured query model for filters, selected columns, sorting, row limits, view FetchXML, and grid layouts
 - Resolves table and column display names to logical metadata at runtime, including valid target tables for lookup columns
 - Composes multi-step workflows such as finding a named contact, discovering its invoice relationship, creating `AI Result`, navigating to it, and opening its first sorted record
@@ -27,7 +29,7 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 - Shows job progress, local paginated inspection, stop-after-chunk controls, and fresh remaining-work previews that reconcile uncertain outcomes rather than replaying writes
 - Refreshes the matching open form or list after approved writes, while protecting forms with other unsaved changes
 - Includes recent conversation turns, tool calls, and approved execution successes or failures as authoritative audit details for follow-up requests
-- Automatically resumes unfinished live requests after successful record, membership, or completed bulk-job approvals, using the original intent and exact saved IDs; every additional write needs fresh approval
+- Automatically resumes unfinished live requests after successful record, cloud-flow, membership, or completed bulk-job approvals, using the original intent and exact saved IDs; every additional write needs fresh approval
 - Reads the signed-in Dataverse user's time-zone code, named zone, local date/time, and locale settings automatically; server conversion applies daylight-saving rules
 - Supplies an exact rolling UTC 30-day interval and distinguishes Dataverse user settings from browser settings, without asking for today’s date
 - Provides opt-in local conversation history using IndexedDB, with resume, individual deletion, clear-all, retention, and count limits
@@ -94,6 +96,12 @@ Tool-enabled prompts use the Azure OpenAI Responses API so reasoning models can 
 /openai/v1/responses
 ```
 
+## Cloud-flow workflows
+
+Oddy manages modern cloud flows through the signed-in Dataverse `workflows` Web API. The model works with a typed flow graph rather than raw `clientdata`; Oddy resolves table/column metadata, validates an existing Dataverse connection reference, compiles the definition, and shows the complete trigger/action specification before approval.
+
+The first version supports manual or Dataverse row create/update/delete triggers and sequential Dataverse list/get/add/update-row actions. Creates go to the environment's default solution and remain **Off**. Updates require an exact workflow ID and ETag and are currently limited to unmanaged flows created by Oddy. Managed or unsupported existing definitions remain inspection-only.
+
 ## Bulk workflows
 
 Example requests:
@@ -128,13 +136,13 @@ The extension:
 
 - Stores the key only in local extension storage
 - Does not send record context to Azure OpenAI until the user submits a prompt
-- Allows record context, related-record queries, personal-view updates, record-change previews, and navigation tools to be disabled per request
+- Allows record context, related-record queries, cloud-flow inspection/previews, personal-view updates, record-change previews, and navigation tools to be disabled per request
 - Shows the selected active-record payload before sending and labels dynamic related-record queries in responses
 - Allows individual fields to be deselected
 - Supports an always-excluded logical-field list
 - Persists chat transcripts only when local history is explicitly enabled; saved history stays in the current Chrome profile and can be deleted at any time
 - Stores necessary bulk rows/datasets/checkpoints locally even when chat history is off, without independent encryption; Bulk workspace can clear them explicitly, but deletion does not undo Dataverse writes and removes recovery evidence
-- Never exposes Dataverse mutation, marketing-list membership, or custom-skill change execution to the model; Azure OpenAI can only prepare proposals
+- Never exposes Dataverse mutation, cloud-flow definition writes, marketing-list membership, or custom-skill change execution to the model; Azure OpenAI can only prepare proposals
 - Executes only fields selected in the record approval card and uses Dataverse optimistic concurrency for updates
 - Records approval execution outcomes in the transcript so Oddy can diagnose failures and prepare a fresh corrected preview
 - Revalidates static-list status, member type, record existence, existing membership, and the tenant's `AddListMembersList` metadata immediately before execution
@@ -153,7 +161,9 @@ lib/
   browser/                Active-tab context, navigation, injection, refresh
   bulk/                   Strict plans, dataset parsing, local jobs, derived counts, transport, recovery
   dataverse/              Primitive request/result and metadata contracts
+  flows/                  Typed cloud-flow graph, proposal, and execution contracts
   dataverse-primitives.ts Self-contained signed-session page executor
+  dataverse-flow-primitives.ts Self-contained cloud-flow reader/compiler/executor
   approvals.ts            Shared approval rules and synchronous execution lock
   approval-continuation.ts Request-scoped post-approval continuation guards
   conversation-model.ts   Transcript contracts, restoration, authoritative history
@@ -184,7 +194,7 @@ Development commands:
 - Relationship discovery currently supports direct one-to-many and many-to-one metadata. Many-to-many and indirect paths are not supported yet.
 - Related-table display-name resolution may require loading the environment's table catalog when a logical name is not known.
 - Only the eight most recent visible turns are sent to Azure OpenAI for a request. Automatic approval continuations also include the original request and the approved execution outcome so IDs and intent are not lost. When local history is enabled, the full visible transcript remains available locally for browsing and resuming.
-- Automatic continuation applies only to successful live business-record, membership, or fully completed bulk-job approvals. It stops on failure, rejection, changed environment, revoked consent, or a newer user request. Restored histories never automatically resume; ask Oddy to continue an existing task explicitly.
+- Automatic continuation applies only to successful live business-record, cloud-flow, membership, or fully completed bulk-job approvals. It stops on failure, rejection, changed environment, revoked consent, or a newer user request. Restored histories never automatically resume; ask Oddy to continue an existing task explicitly.
 - Local conversation history is protected by the Chrome profile and operating-system account but is not independently encrypted by Oddy.
 - Custom skills currently use a restricted, model-executed workflow: tool access and inputs are enforced by the extension, while ordered workflow instructions are followed by the model. Arbitrary scripts and imported skill packages are not supported.
 - AI-assisted skill management is limited to custom skills and must be enabled per request or by default in settings. Skill changes are atomic; individual workflow fields cannot yet be selectively approved.
@@ -192,6 +202,7 @@ Development commands:
 - Personal-view primitives are locked to the name `AI Result`. For each target table, the executor reuses the oldest matching view and updates it instead of creating another. Existing duplicates are left untouched.
 - Structured queries and view layouts require requested columns to be readable and resolvable from the target table's localized metadata.
 - Approved business-record writes support scalar text, number, boolean, date, null, Choice/State/Status labels resolved through option metadata, and single-record Lookup, Owner, and Customer values. Lookup targets are validated through metadata and written with the resolved Dataverse navigation property. Clearing lookups, party-list fields, and multi-select updates are not yet supported.
+- Cloud-flow editing is intentionally narrow: only unmanaged Oddy-created definitions are editable; other modern flows are inspection-only. V1 uses one existing Dataverse connection reference, a linear action chain, scalar literals/row outputs, and the default solution. Conditions, loops, parallel branches, other connectors, arbitrary expressions, solution selection, activation/deactivation, deletion, sharing, and connection creation are not supported yet.
 - Marketing-list membership is limited to static lists and one member table per job. Query-backed jobs page all matching accounts, contacts, or leads within the stated bulk limits; the explicit-ID tool retains its 50-member limit. Dynamic-list membership remains query-driven.
 - User time-zone settings use documented `usersettingscollection`, `timezonedefinitions`, and `LocalTimeFromUtcTime` reads. If these are denied, the current Xrm user offset can provide a clearly labeled fallback; it is not a historical/future daylight-saving rule. Browser settings are never silently substituted for Dataverse user settings.
 - The selected Azure OpenAI deployment and resource region must support the Responses API for related-record tools.

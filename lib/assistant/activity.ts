@@ -68,6 +68,58 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
           : 'Local skill storage was not changed.'
       };
     }
+    if (result.action === 'list_flows') {
+      return {
+        name: toolName,
+        label: 'Listed solution cloud flows',
+        summary: `${result.flows?.length || 0} flow${result.flows?.length === 1 ? '' : 's'}`,
+        details:
+          result.flows
+            ?.map(
+              (flow) =>
+                `${flow.name} (${flow.workflowId}) · ${flow.state} · ${flow.oddyEditable ? 'Oddy-editable' : 'inspection only'}`
+            )
+            .join('; ') || 'No modern cloud flows found.'
+      };
+    }
+    if (result.action === 'get_flow') {
+      return {
+        name: toolName,
+        label: `Read ${result.flow?.name || 'cloud flow'}`,
+        summary: result.flow?.oddyEditable ? 'Typed definition loaded' : 'Inspection only',
+        details: result.flow
+          ? `${result.flow.workflowId} · ${result.flow.state} · ${result.flow.spec?.actions.length || 0} supported actions`
+          : undefined
+      };
+    }
+    if (result.action === 'list_flow_connection_references') {
+      return {
+        name: toolName,
+        label: 'Listed Dataverse flow connections',
+        summary: `${result.connectionReferences?.length || 0} connection reference${result.connectionReferences?.length === 1 ? '' : 's'}`,
+        details: result.connectionReferences
+          ?.map((connection) => `${connection.displayName} (${connection.logicalName})`)
+          .join('; ')
+      };
+    }
+    if (result.action === 'prepare_flow_change') {
+      return {
+        name: toolName,
+        label: `Prepared cloud-flow ${result.flowChange?.operation || 'change'}`,
+        summary: `${result.flowChange?.after.actions.length || 0} action${result.flowChange?.after.actions.length === 1 ? '' : 's'} awaiting approval`,
+        details: result.flowChange
+          ? `${result.flowChange.after.name}; no flow definition was written.`
+          : 'No flow definition was written.'
+      };
+    }
+    if (result.action === 'execute_flow_change') {
+      return {
+        name: toolName,
+        label: 'Applied approved cloud-flow change',
+        summary: `${result.flowChangeResult?.name || 'Cloud flow'} · ${result.flowChangeResult?.state || 'unknown'}`,
+        details: result.flowChangeResult?.workflowId
+      };
+    }
     if (result.action === 'resolve_schema') {
       return {
         name: toolName,

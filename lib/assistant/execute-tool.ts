@@ -1,5 +1,6 @@
 import type { DataversePrimitiveRequest } from '../dataverse-primitives';
 import { executePrimitiveInActiveTab } from '../browser/primitives';
+import { executeFlowPrimitiveInActiveTab } from '../browser/flows';
 import { activeBulkEngine } from '../browser/bulk';
 import { parseBulkPlan } from '../bulk/plan';
 import { bulkRepository } from '../bulk/repository';
@@ -16,7 +17,8 @@ import {
   queryFromArguments,
   mutationValueArray,
   marketingListMemberArray,
-  skillFromToolArguments
+  skillFromToolArguments,
+  flowSpecFromArguments
 } from './arguments';
 
 export async function executeAssistantTool(
@@ -133,6 +135,48 @@ export async function executeAssistantTool(
 
   if (!context.origin) {
     return { ok: false, action: 'resolve_schema', error: 'The Dataverse origin is unavailable.' };
+  }
+
+  if (toolName === 'list_dataverse_flows') {
+    return executeFlowPrimitiveInActiveTab(context, {
+      action: 'list_flows',
+      origin: context.origin,
+      top: numberValue(args.top, 20, 1, 50)
+    });
+  }
+  if (toolName === 'get_dataverse_flow') {
+    return executeFlowPrimitiveInActiveTab(context, {
+      action: 'get_flow',
+      origin: context.origin,
+      workflowId: stringValue(args.workflowId)
+    });
+  }
+  if (toolName === 'list_dataverse_flow_connections') {
+    return executeFlowPrimitiveInActiveTab(context, {
+      action: 'list_flow_connection_references',
+      origin: context.origin,
+      top: numberValue(args.top, 50, 1, 100)
+    });
+  }
+  if (toolName === 'prepare_dataverse_flow_change') {
+    try {
+      if (args.operation !== 'create' && args.operation !== 'update') {
+        throw new Error('A valid flow-change operation is required.');
+      }
+      return executeFlowPrimitiveInActiveTab(context, {
+        action: 'prepare_flow_change',
+        origin: context.origin,
+        operation: args.operation,
+        workflowId: optionalString(args.workflowId),
+        spec: flowSpecFromArguments(args.spec)
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        action: 'prepare_flow_change',
+        error: errorMessage(error)
+      };
+    }
   }
 
   let request: DataversePrimitiveRequest;

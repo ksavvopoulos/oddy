@@ -99,6 +99,7 @@ export function App() {
     setTranscript([]);
     setPendingContinuation(undefined);
     setMutationApprovals({});
+    setFlowChangeApprovals({});
     setListMembershipApprovals({});
     setSkillChangeApprovals({});
     setBulkJobApprovals({});
@@ -120,6 +121,7 @@ export function App() {
       setPendingContinuation(undefined);
       setTranscript(restored.transcript);
       setMutationApprovals(restored.mutationApprovals);
+      setFlowChangeApprovals(restored.flowChangeApprovals || {});
       setListMembershipApprovals(restored.listMembershipApprovals);
       setSkillChangeApprovals(restored.skillChangeApprovals);
       setBulkJobApprovals(restored.bulkJobApprovals || {});
@@ -168,6 +170,8 @@ export function App() {
   const {
     mutationApprovals,
     setMutationApprovals,
+    flowChangeApprovals,
+    setFlowChangeApprovals,
     listMembershipApprovals,
     setListMembershipApprovals,
     skillChangeApprovals,
@@ -221,6 +225,7 @@ export function App() {
         tableLogicalName: context?.tableLogicalName,
         transcript,
         mutationApprovals,
+        flowChangeApprovals,
         listMembershipApprovals,
         skillChangeApprovals,
         bulkJobApprovals
@@ -249,6 +254,7 @@ export function App() {
     loadConversationHistory,
     listMembershipApprovals,
     mutationApprovals,
+    flowChangeApprovals,
     settings,
     skillChangeApprovals,
     bulkJobApprovals,
@@ -353,6 +359,7 @@ export function App() {
           content: result.data!.content,
           toolsUsed: result.data!.toolsUsed,
           pendingMutations: result.data!.pendingMutations,
+          pendingFlowChanges: result.data!.pendingFlowChanges,
           pendingListMemberships: result.data!.pendingListMemberships,
           pendingSkillChanges: result.data!.pendingSkillChanges,
           pendingBulkJobs: result.data!.pendingBulkJobs,
@@ -385,6 +392,7 @@ export function App() {
       allowDataverseTools: includeContext,
       allowSkillTools: allowSkillManagement,
       mutationApprovals,
+      flowChangeApprovals,
       listMembershipApprovals,
       skillChangeApprovals,
       bulkJobApprovals
@@ -405,6 +413,7 @@ export function App() {
     includeContext,
     allowSkillManagement,
     mutationApprovals,
+    flowChangeApprovals,
     listMembershipApprovals,
     skillChangeApprovals,
     bulkJobApprovals,
@@ -846,11 +855,11 @@ export function App() {
         </label>
         {includeContext && context?.isDataverse && (
           <small className="tool-consent">
-            Dataverse primitives may run queries, manage the AI Result personal view, prepare record
-            changes for your approval, and navigate the active tab. Business-record writes only run
-            after you approve the preview. Bulk jobs temporarily store full selected rows locally
-            for checkpointing; row previews stay local and only compact job metadata/counts go to
-            the model.
+            Dataverse primitives may run queries, inspect cloud flows, manage the AI Result personal
+            view, prepare record or cloud-flow changes for your approval, and navigate the active
+            tab. Business-record and flow-definition writes only run after you approve the preview.
+            Bulk jobs temporarily store full selected rows locally for checkpointing; row previews
+            stay local and only compact job metadata/counts go to the model.
           </small>
         )}
 

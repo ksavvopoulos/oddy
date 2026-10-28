@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { navigationUrlsMatch } from '../lib/browser/navigation';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeDataversePrimitive } from '../lib/dataverse-primitives';
+import { executeDataverseFlowPrimitive } from '../lib/dataverse-flow-primitives';
+import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
 import { getActiveDataverseContext } from '../lib/browser/context';
 import { collectDataverseUserContext } from '../lib/dataverse-user-context';
 import { collectXrmPageContext } from '../lib/dataverse-context';
@@ -46,6 +48,50 @@ describe('browser boundary', () => {
       func: executeDataversePrimitive,
       args: [request]
     });
+  });
+
+  it('uses the self-contained flow executor and refuses a changed environment', async () => {
+    const executeScript = vi.fn();
+    vi.stubGlobal('chrome', {
+      tabs: { query: async () => [{ id: 1, url: 'https://other.crm.dynamics.com/main.aspx' }] },
+      scripting: { executeScript }
+    });
+    const result = await executeFlowPrimitiveInActiveTab(context, {
+      action: 'list_flows',
+      origin
+    });
+    expect(result.ok).toBe(false);
+    expect(executeScript).not.toHaveBeenCalled();
+  });
+
+  it('serializes the flow executor without module closures', async () => {
+    const injected = new Function(
+      `return (${executeDataverseFlowPrimitive.toString()});`
+    )() as typeof executeDataverseFlowPrimitive;
+    vi.stubGlobal('window', { location: { origin } });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: [
+              {
+                connectionreferencelogicalname: 'cr_dataverse',
+                connectionreferencedisplayname: 'Dataverse',
+                connectorid: '/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps',
+                ismanaged: false
+              }
+            ]
+          })
+        )
+      )
+    );
+    const result = await injected({
+      action: 'list_flow_connection_references',
+      origin
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionReferences?.[0]?.logicalName).toBe('cr_dataverse');
   });
 
   it('still runs after serialization without access to module closures', async () => {
