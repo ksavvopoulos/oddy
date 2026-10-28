@@ -194,6 +194,7 @@ export type OddySkillToolName =
   | 'execute_dataverse_view'
   | 'list_dataverse_flows'
   | 'get_dataverse_flow'
+  | 'open_dataverse_flow_designer'
   | 'list_dataverse_flow_connections'
   | 'prepare_dataverse_flow_change'
   | 'prepare_dataverse_record_change'
@@ -327,6 +328,10 @@ export type ExtensionMessage =
     }
   | { type: 'TEST_LLM_CONNECTION'; payload: AzureOpenAISettings }
   | { type: 'OPEN_DATAVERSE_RECORD'; payload: { tableLogicalName: string; recordId: string } }
+  | {
+      type: 'OPEN_DATAVERSE_FLOW_DESIGNER';
+      payload: { workflowId: string; environmentOrigin?: string };
+    }
   | { type: 'OPEN_OPTIONS' };
 
 export interface MessageResult<T> {

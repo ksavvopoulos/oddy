@@ -5,6 +5,7 @@ import { activeBulkEngine } from '../browser/bulk';
 import { parseBulkPlan } from '../bulk/plan';
 import { bulkRepository } from '../bulk/repository';
 import { navigateDataverse } from '../browser/navigation';
+import { openDataverseFlowDesigner } from '../browser/flow-navigation';
 import { errorMessage } from '../messages';
 import { getUserSkills, prepareOddySkillChange, skillRevision } from '../skills';
 import type { DataverseContext } from '../types';
@@ -117,6 +118,10 @@ export async function executeAssistantTool(
         error: errorMessage(error)
       };
     }
+  }
+
+  if (toolName === 'open_dataverse_flow_designer') {
+    return openDataverseFlowDesigner(context, stringValue(args.workflowId));
   }
 
   if (toolName === 'navigate_dataverse') {

@@ -1,5 +1,6 @@
 import type { DataversePrimitiveResult } from '../dataverse-primitives';
 import type { ToolActivity } from '../types';
+import type { NavigationResult } from '../browser/navigation';
 import type { AssistantToolResult } from './contracts';
 
 export function activityForTool(toolName: string, result: AssistantToolResult): ToolActivity {
@@ -211,13 +212,23 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
     };
   }
 
-  const loaded = result.navigationState === 'loaded';
+  if (result.navigationMethod === 'power-automate-url') {
+    return {
+      name: toolName,
+      label: `Opened ${result.flowName || 'cloud flow'} in Power Automate`,
+      summary: 'Designer tab opened',
+      details: result.url
+    };
+  }
+
+  const navigationResult = result as NavigationResult;
+  const loaded = navigationResult.navigationState === 'loaded';
   return {
     name: toolName,
-    label: `${loaded ? 'Loaded' : 'Opening'} ${result.tableLogicalName || 'Dataverse'}`,
+    label: `${loaded ? 'Loaded' : 'Opening'} ${navigationResult.tableLogicalName || 'Dataverse'}`,
     summary: loaded
-      ? `${result.target} destination finished loading`
-      : `${result.target} navigation started; Dataverse is still loading`,
-    details: `${result.navigationMethod === 'xrm' ? 'Xrm.Navigation.navigateTo' : 'Browser URL fallback'}; target URL: ${result.url}`
+      ? `${navigationResult.target} destination finished loading`
+      : `${navigationResult.target} navigation started; Dataverse is still loading`,
+    details: `${navigationResult.navigationMethod === 'xrm' ? 'Xrm.Navigation.navigateTo' : 'Browser URL fallback'}; target URL: ${navigationResult.url}`
   };
 }

@@ -35,6 +35,8 @@ export async function executeDataverseFlowPrimitive(
     name?: string;
     description?: string;
     statecode?: number;
+    category?: number;
+    type?: number;
     ismanaged?: boolean;
     modifiedon?: string;
     clientdata?: string;
@@ -143,7 +145,8 @@ export async function executeDataverseFlowPrimitive(
         primaryIdAttribute: metadata.PrimaryIdAttribute
       };
       entityCache.set(requested.toLowerCase(), resolved);
-      entityCache.set(resolved.logicalName, resolved);
+      entityCache.set(resolved.logicalName.toLowerCase(), resolved);
+      entityCache.set(resolved.entitySetName.toLowerCase(), resolved);
       return resolved;
     };
     const attributes = async (entity: ResolvedEntity) => {
@@ -322,6 +325,10 @@ export async function executeDataverseFlowPrimitive(
     const flowDetail = (record: WorkflowRecord): DataverseFlowDetail => {
       if (!record.workflowid || !record.name)
         throw new Error('Dataverse returned an invalid flow record.');
+      if (record.category !== undefined && record.category !== 5)
+        throw new Error('The requested workflow is not a modern cloud flow.');
+      if (record.type !== undefined && record.type !== 1)
+        throw new Error('The requested workflow is not a cloud-flow definition.');
       const spec = markerSpec(record.clientdata);
       const isManaged = record.ismanaged === true;
       const definitionMatches = Boolean(
@@ -353,14 +360,14 @@ export async function executeDataverseFlowPrimitive(
       if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('The workflow ID is invalid.');
       const url =
         `${request.origin}/api/data/v9.2/workflows(${id})?` +
-        '$select=workflowid,name,description,statecode,ismanaged,modifiedon,clientdata';
+        '$select=workflowid,name,description,statecode,category,type,ismanaged,modifiedon,clientdata';
       return flowDetail(await getJson<WorkflowRecord>(url));
     };
     const listFlows = async () => {
       const url = new URL(`${request.origin}/api/data/v9.2/workflows`);
       url.searchParams.set(
         '$select',
-        'workflowid,name,description,statecode,ismanaged,modifiedon,clientdata'
+        'workflowid,name,description,statecode,category,type,ismanaged,modifiedon,clientdata'
       );
       url.searchParams.set('$filter', 'category eq 5 and type eq 1');
       url.searchParams.set('$orderby', 'modifiedon desc');
@@ -514,7 +521,7 @@ export async function executeDataverseFlowPrimitive(
           action = {
             id,
             kind: 'list-rows',
-            table: entity.logicalName,
+            table: entity.entitySetName,
             ...(selectColumns.length ? { selectColumns } : {}),
             ...(filters.length ? { filters } : {}),
             ...(orderBy.length ? { orderBy } : {}),
@@ -529,7 +536,7 @@ export async function executeDataverseFlowPrimitive(
           action = {
             id,
             kind: 'get-row',
-            table: entity.logicalName,
+            table: entity.entitySetName,
             rowId: await normalizeValue(candidate.rowId, triggerEntity, priorActions),
             ...(selectColumns.length ? { selectColumns } : {})
           };
@@ -555,11 +562,11 @@ export async function executeDataverseFlowPrimitive(
           }
           action =
             candidate.kind === 'add-row'
-              ? { id, kind: 'add-row', table: entity.logicalName, values }
+              ? { id, kind: 'add-row', table: entity.entitySetName, values }
               : {
                   id,
                   kind: 'update-row',
-                  table: entity.logicalName,
+                  table: entity.entitySetName,
                   rowId: await normalizeValue(candidate.rowId, triggerEntity, priorActions),
                   values
                 };
@@ -781,6 +788,26 @@ export async function executeDataverseFlowPrimitive(
         ok: true,
         action: request.action,
         connectionReferences: await listConnectionReferences()
+      };
+    }
+    if (request.action === 'get_flow_designer_target') {
+      const flow = await getFlow(request.workflowId);
+      const organization = await getJson<{ Detail?: { EnvironmentId?: string } }>(
+        `${request.origin}/api/data/v9.2/RetrieveCurrentOrganization(AccessType=@p1)?` +
+          `@p1=Microsoft.Dynamics.CRM.EndpointAccessType'Default'`
+      );
+      const environmentId = organization.Detail?.EnvironmentId?.trim() || '';
+      if (!environmentId || environmentId.length > 200 || !/^[a-z0-9-]+$/i.test(environmentId)) {
+        throw new Error('Dataverse did not return a valid Power Platform environment ID.');
+      }
+      return {
+        ok: true,
+        action: request.action,
+        flowDesignerTarget: {
+          environmentId,
+          workflowId: flow.workflowId,
+          flowName: flow.name
+        }
       };
     }
     if (request.action === 'prepare_flow_change') {

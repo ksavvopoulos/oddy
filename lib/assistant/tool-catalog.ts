@@ -43,6 +43,11 @@ export const SKILL_TOOL_OPTIONS: Array<{
     description: 'Read a cloud flow and its typed Oddy definition when supported.'
   },
   {
+    name: 'open_dataverse_flow_designer',
+    label: 'Open cloud-flow designer',
+    description: 'Open an exact cloud flow in the Power Automate designer.'
+  },
+  {
     name: 'list_dataverse_flow_connections',
     label: 'List flow connections',
     description: 'List existing Dataverse connection references available to cloud flows.'
@@ -379,6 +384,20 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
       name: 'get_dataverse_flow',
       description:
         'Read one modern cloud flow by exact workflow ID. Oddy-created flows include a complete typed specification that must be preserved and revised for edits. Other flows are inspection-only.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { workflowId: { type: 'string' } },
+        required: ['workflowId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_dataverse_flow_designer',
+      description:
+        'Open the exact modern cloud flow in a new Power Automate designer tab. Resolve or list the flow first and pass its exact workflow ID. Perform this navigation instead of returning manual instructions or a link.',
       parameters: {
         type: 'object',
         additionalProperties: false,

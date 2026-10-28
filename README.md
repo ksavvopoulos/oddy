@@ -14,7 +14,7 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 - Restricts each active skill to its declared Dataverse tools and validates required inputs before execution
 - Exports standard `SKILL.md` instructions alongside an Oddy workflow JSON definition
 - Gives Azure OpenAI composable schema/query/navigation tools, typed cloud-flow primitives, and preparation-only bulk-job tools, without exposing write execution
-- Lists modern cloud flows and existing Dataverse connection references, reads supported typed definitions, and prepares approval-gated flow creates or edits
+- Lists modern cloud flows and existing Dataverse connection references, reads supported typed definitions, opens exact flows in the Power Automate designer, and prepares approval-gated flow creates or edits
 - Creates Dataverse-only flows from a constrained graph of manual/row triggers and sequential list/get/add/update-row actions; new flows remain Off by default
 - Uses a shared structured query model for filters, selected columns, sorting, row limits, view FetchXML, and grid layouts
 - Resolves table and column display names to logical metadata at runtime, including valid target tables for lookup columns
@@ -100,7 +100,7 @@ Tool-enabled prompts use the Azure OpenAI Responses API so reasoning models can 
 
 Oddy manages modern cloud flows through the signed-in Dataverse `workflows` Web API. The model works with a typed flow graph rather than raw `clientdata`; Oddy resolves table/column metadata, validates an existing Dataverse connection reference, compiles the definition, and shows the complete trigger/action specification before approval.
 
-The first version supports manual or Dataverse row create/update/delete triggers and sequential Dataverse list/get/add/update-row actions. Creates go to the environment's default solution and remain **Off**. Updates require an exact workflow ID and ETag and are currently limited to unmanaged flows created by Oddy. Managed or unsupported existing definitions remain inspection-only.
+The first version supports manual or Dataverse row create/update/delete triggers and sequential Dataverse list/get/add/update-row actions. Trigger definitions use Dataverse logical table names such as `contact`, while connector actions are compiled with the required entity-set names such as `contacts`. Oddy can resolve the current Power Platform environment through Dataverse and open an exact workflow ID directly in a new Power Automate designer tab. Creates go to the environment's default solution and remain **Off**. Updates require an exact workflow ID and ETag and are currently limited to unmanaged flows created by Oddy. Managed or unsupported existing definitions remain inspection-only.
 
 ## Bulk workflows
 

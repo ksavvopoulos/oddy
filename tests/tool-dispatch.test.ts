@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeAssistantTool } from '../lib/assistant/execute-tool';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
+import { openDataverseFlowDesigner } from '../lib/browser/flow-navigation';
 import {
   queryFromArguments,
   mutationValueArray,
@@ -13,6 +14,7 @@ import { recordProposal } from './fixtures/proposals';
 
 vi.mock('../lib/browser/primitives', () => ({ executePrimitiveInActiveTab: vi.fn() }));
 vi.mock('../lib/browser/flows', () => ({ executeFlowPrimitiveInActiveTab: vi.fn() }));
+vi.mock('../lib/browser/flow-navigation', () => ({ openDataverseFlowDesigner: vi.fn() }));
 afterEach(() => {
   vi.resetAllMocks();
 });
@@ -56,6 +58,24 @@ describe('assistant tool dispatch', () => {
     vi.mocked(executePrimitiveInActiveTab).mockClear();
     expect((await executeAssistantTool(context, 'execute_mutation', '{}')).ok).toBe(false);
     expect(executePrimitiveInActiveTab).not.toHaveBeenCalled();
+  });
+
+  it('opens an exact cloud flow in Power Automate through a navigation-only tool', async () => {
+    vi.mocked(openDataverseFlowDesigner).mockResolvedValue({
+      ok: true,
+      navigationState: 'started',
+      navigationMethod: 'power-automate-url',
+      workflowId: '00000000-0000-0000-0000-000000000010'
+    });
+    await executeAssistantTool(
+      context,
+      'open_dataverse_flow_designer',
+      JSON.stringify({ workflowId: '00000000-0000-0000-0000-000000000010' })
+    );
+    expect(openDataverseFlowDesigner).toHaveBeenCalledWith(
+      context,
+      '00000000-0000-0000-0000-000000000010'
+    );
   });
 
   it('routes typed flow preparation but never flow execution from model calls', async () => {

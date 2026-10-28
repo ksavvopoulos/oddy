@@ -107,6 +107,12 @@ export interface PreparedDataverseFlowChange {
   warnings: string[];
 }
 
+export interface DataverseFlowDesignerTarget {
+  environmentId: string;
+  workflowId: string;
+  flowName: string;
+}
+
 export interface DataverseFlowChangeExecutionResult {
   operation: DataverseFlowOperation;
   workflowId: string;
@@ -118,6 +124,7 @@ export type DataverseFlowPrimitiveRequest =
   | { action: 'list_flows'; origin: string; top?: number }
   | { action: 'get_flow'; origin: string; workflowId: string }
   | { action: 'list_flow_connection_references'; origin: string; top?: number }
+  | { action: 'get_flow_designer_target'; origin: string; workflowId: string }
   | {
       action: 'prepare_flow_change';
       origin: string;
@@ -137,6 +144,7 @@ export interface DataverseFlowPrimitiveResult {
   flows?: DataverseFlowSummary[];
   flow?: DataverseFlowDetail;
   connectionReferences?: DataverseConnectionReferenceSummary[];
+  flowDesignerTarget?: DataverseFlowDesignerTarget;
   flowChange?: PreparedDataverseFlowChange;
   flowChangeResult?: DataverseFlowChangeExecutionResult;
   error?: string;

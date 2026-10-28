@@ -9,6 +9,7 @@ import { createDataset } from '../lib/bulk/datasets';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
 import { navigateDataverse } from '../lib/browser/navigation';
+import { openDataverseFlowDesigner } from '../lib/browser/flow-navigation';
 import { refreshAfterMutation } from '../lib/browser/refresh';
 import { errorMessage } from '../lib/messages';
 import { executeOddySkillChange, getSkillById } from '../lib/skills';
@@ -261,6 +262,18 @@ async function handleMessage(message: ExtensionMessage): Promise<MessageResult<u
         { role: 'user', content: 'Test connection' }
       ]);
       return { ok: true, data: response };
+    }
+
+    case 'OPEN_DATAVERSE_FLOW_DESIGNER': {
+      const context = await getActiveDataverseContext({ includeUserSettings: false });
+      if (
+        message.payload.environmentOrigin &&
+        context.origin !== message.payload.environmentOrigin
+      ) {
+        throw new Error('Return to the Dataverse environment that contains this cloud flow.');
+      }
+      const result = await openDataverseFlowDesigner(context, message.payload.workflowId);
+      return result.ok ? { ok: true, data: result } : { ok: false, error: result.error };
     }
 
     case 'OPEN_DATAVERSE_RECORD': {

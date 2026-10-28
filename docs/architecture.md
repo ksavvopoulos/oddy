@@ -56,7 +56,7 @@ background execution message → environment/metadata revalidation → write
 
 Modern cloud flows are read and written through the signed-in Dataverse `workflows` endpoint. `lib/dataverse-flow-primitives.ts` is a separate self-contained MAIN-world executor because flow compilation and workflow-table validation are a distinct domain from generic record mutation.
 
-The model can list flows, read one flow, list existing Dataverse connection references, and prepare a typed create/update. The V1 graph supports manual or Dataverse row triggers and a sequential chain of list/get/add/update-row actions. Table and column names are normalized from metadata, write columns are checked for create/update validity, action references must point backward, and collection outputs cannot be silently treated as scalar values. The compiler owns connector operation IDs, Logic Apps expression serialization, `clientdata`, and the Oddy ownership marker.
+The model can list flows, read one flow, open its exact Power Automate designer, list existing Dataverse connection references, and prepare a typed create/update. Designer navigation calls documented `RetrieveCurrentOrganization` through the signed-in Dataverse session to resolve `EnvironmentId`, then opens `https://make.powerautomate.com/environments/{environmentId}/flows/{workflowId}/edit` in a new tab. The V1 graph supports manual or Dataverse row triggers and a sequential chain of list/get/add/update-row actions. Table and column names are normalized from metadata: webhook triggers retain the logical table name (`contact`), while connector action `entityName` parameters use the entity-set name (`contacts`). Write columns are checked for create/update validity, action references must point backward, and collection outputs cannot be silently treated as scalar values. The compiler owns connector operation IDs, Logic Apps expression serialization, `clientdata`, and the Oddy ownership marker.
 
 ```text
 model: typed graph → metadata/connection validation → compiled definition
@@ -200,7 +200,7 @@ No test needs live credentials or a Dataverse tenant. That also means tests do *
 
 1. Load `.output/chrome-mv3`, open a Dataverse app, and verify context detection.
 2. Query records, create/update `AI Result`, and navigate to a record.
-3. List flow connection references, prepare a manual Dataverse list-rows flow, inspect its full typed approval card, approve it, and verify it is created Off. Read it back, prepare a rename, alter it externally before approval, and verify the stale update is refused.
+3. List flow connection references, prepare a manual Dataverse list-rows flow, inspect its full typed approval card, approve it, and verify it is created Off. Ask Oddy to show it in Power Automate and verify the exact designer opens in a new tab. Read it back, prepare a rename, alter it externally before approval, and verify the stale update is refused.
 4. Prepare a record change; deselect/reselect fields; reject it. Prepare another and approve it.
 5. Ask to create a static marketing list and add contacts created in the last 30 days. Approve creation; Oddy should automatically use the saved list ID and prepare the matching members. Approve membership separately and verify bounded `AddListMembersList` chunks for the frozen matching selection, never per-contact writes. Check dynamic-list rejection.
 6. Trigger an execution failure and confirm the next assistant turn receives the exact audit error and requires a fresh preview.
@@ -213,4 +213,4 @@ No test needs live credentials or a Dataverse tenant. That also means tests do *
 
 ## Scope of this refactor
 
-The original module split preserves existing histories and primitive behavior. Version 0.12 adds typed, approval-gated Dataverse cloud-flow creation and editing for a deliberately constrained graph. It does not introduce raw `clientdata`, arbitrary expressions/actions, automatic activation, connection creation, codemode, changed consent defaults, or a larger outbound history window. Broader connector/graph support, native bulk-message optimization, and unattended server execution remain separate future capabilities.
+The original module split preserves existing histories and primitive behavior. Version 0.12 adds typed, approval-gated Dataverse cloud-flow creation/editing and exact Power Automate designer navigation for a deliberately constrained graph. It does not introduce raw `clientdata`, arbitrary expressions/actions, automatic activation, connection creation, codemode, changed consent defaults, or a larger outbound history window. Broader connector/graph support, native bulk-message optimization, and unattended server execution remain separate future capabilities.

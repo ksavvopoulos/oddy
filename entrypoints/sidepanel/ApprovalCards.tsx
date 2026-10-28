@@ -1,6 +1,7 @@
 import { approvalStatusLabel, canEditApproval } from '../../lib/approvals';
 import type { StoredTranscriptItem } from '../../lib/conversation-model';
 import type { ApprovalActions } from './useApprovals';
+import { sendExtensionMessage } from '../../lib/messages';
 import { formatPreviewValue } from './formatting';
 
 interface Props {
@@ -187,11 +188,30 @@ export function FlowChangeCards({ item, approvals }: Props) {
                 </p>
                 {approval.error && <p className="mutation-error">{approval.error}</p>}
                 {approval.status === 'approved' && approval.result && (
-                  <p className="mutation-success">
-                    {approval.result.name} was{' '}
-                    {approval.result.operation === 'create' ? 'created' : 'updated'} and is{' '}
-                    {approval.result.state}.
-                  </p>
+                  <>
+                    <p className="mutation-success">
+                      {approval.result.name} was{' '}
+                      {approval.result.operation === 'create' ? 'created' : 'updated'} and is{' '}
+                      {approval.result.state}.
+                    </p>
+                    <div className="mutation-actions">
+                      <button
+                        type="button"
+                        className="mutation-approve"
+                        onClick={() =>
+                          void sendExtensionMessage({
+                            type: 'OPEN_DATAVERSE_FLOW_DESIGNER',
+                            payload: {
+                              workflowId: approval.result!.workflowId,
+                              environmentOrigin: change.environmentOrigin
+                            }
+                          })
+                        }
+                      >
+                        Open in Power Automate
+                      </button>
+                    </div>
+                  </>
                 )}
                 {editable && (
                   <div className="mutation-actions">

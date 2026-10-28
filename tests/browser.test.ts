@@ -4,6 +4,7 @@ import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeDataversePrimitive } from '../lib/dataverse-primitives';
 import { executeDataverseFlowPrimitive } from '../lib/dataverse-flow-primitives';
 import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
+import { openDataverseFlowDesigner } from '../lib/browser/flow-navigation';
 import { getActiveDataverseContext } from '../lib/browser/context';
 import { collectDataverseUserContext } from '../lib/dataverse-user-context';
 import { collectXrmPageContext } from '../lib/dataverse-context';
@@ -62,6 +63,35 @@ describe('browser boundary', () => {
     });
     expect(result.ok).toBe(false);
     expect(executeScript).not.toHaveBeenCalled();
+  });
+
+  it('opens an exact flow in a new Power Automate designer tab', async () => {
+    const create = vi.fn();
+    const executeScript = vi.fn(async () => [
+      {
+        result: {
+          ok: true,
+          action: 'get_flow_designer_target',
+          flowDesignerTarget: {
+            environmentId: 'Default-00000000-0000-0000-0000-000000000001',
+            workflowId: '00000000-0000-0000-0000-000000000010',
+            flowName: 'Oddy flow'
+          }
+        }
+      }
+    ]);
+    vi.stubGlobal('chrome', {
+      tabs: {
+        query: async () => [{ id: 1, url: `${origin}/main.aspx` }],
+        create
+      },
+      scripting: { executeScript }
+    });
+    const result = await openDataverseFlowDesigner(context, '00000000-0000-0000-0000-000000000010');
+    expect(result.ok).toBe(true);
+    expect(create).toHaveBeenCalledWith({
+      url: 'https://make.powerautomate.com/environments/Default-00000000-0000-0000-0000-000000000001/flows/00000000-0000-0000-0000-000000000010/edit'
+    });
   });
 
   it('serializes the flow executor without module closures', async () => {

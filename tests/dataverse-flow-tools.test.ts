@@ -125,6 +125,42 @@ describe('Dataverse cloud-flow primitives', () => {
     expect(JSON.stringify(result)).not.toContain('clientdata');
   });
 
+  it('resolves the current Power Platform environment for designer navigation', async () => {
+    const workflowId = '00000000-0000-0000-0000-000000000014';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({
+          workflowid: workflowId,
+          name: 'Oddy flow',
+          category: 5,
+          type: 1,
+          statecode: 0,
+          ismanaged: false,
+          clientdata: '{}'
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          Detail: { EnvironmentId: 'Default-00000000-0000-0000-0000-000000000001' }
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeDataverseFlowPrimitive({
+      action: 'get_flow_designer_target',
+      origin,
+      workflowId
+    });
+
+    expect(result.flowDesignerTarget).toEqual({
+      environmentId: 'Default-00000000-0000-0000-0000-000000000001',
+      workflowId,
+      flowName: 'Oddy flow'
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('RetrieveCurrentOrganization');
+  });
+
   it('prepares and creates a typed Dataverse-only flow after approval', async () => {
     const workflowId = '00000000-0000-0000-0000-000000000012';
     const fetchMock = vi
@@ -150,7 +186,12 @@ describe('Dataverse cloud-flow primitives', () => {
         name: 'List one account',
         description: 'Created by Oddy',
         connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-        trigger: { kind: 'manual' },
+        trigger: {
+          kind: 'dataverse-row',
+          table: 'Accounts',
+          change: 'update',
+          scope: 'organization'
+        },
         actions: [
           {
             id: 'List_accounts',
@@ -165,7 +206,7 @@ describe('Dataverse cloud-flow primitives', () => {
 
     expect(prepared.ok).toBe(true);
     expect(prepared.flowChange?.after.actions[0]).toEqual(
-      expect.objectContaining({ table: 'account', selectColumns: ['name'] })
+      expect.objectContaining({ table: 'accounts', selectColumns: ['name'] })
     );
     expect(prepared.flowChange?.warnings.join(' ')).toContain('remain Off');
 
@@ -190,14 +231,94 @@ describe('Dataverse cloud-flow primitives', () => {
       clientdata.properties.connectionReferences.shared_commondataserviceforapps.connection
         .connectionReferenceLogicalName
     ).toBe('cr_sharedcommondataserviceforapps');
+    expect(
+      clientdata.properties.definition.triggers.When_a_row_changes.inputs.parameters[
+        'subscriptionRequest/entityname'
+      ]
+    ).toBe('account');
     expect(clientdata.properties.definition.actions.List_accounts.inputs.host.operationId).toBe(
       'ListRecords'
     );
     expect(clientdata.properties.definition.actions.List_accounts.inputs.parameters).toEqual({
-      entityName: 'account',
+      entityName: 'accounts',
       $select: 'name',
       $top: 1
     });
+  });
+
+  it('keeps trigger table names logical but uses entity-set names for update actions', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(connectionReferences))
+      .mockResolvedValueOnce(
+        response({
+          LogicalName: 'contact',
+          EntitySetName: 'contacts',
+          PrimaryIdAttribute: 'contactid'
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          value: [
+            {
+              LogicalName: 'contactid',
+              AttributeType: 'Uniqueidentifier',
+              IsValidForRead: true,
+              IsValidForUpdate: false
+            },
+            {
+              LogicalName: 'address1_country',
+              AttributeType: 'String',
+              IsValidForRead: true,
+              IsValidForUpdate: true
+            }
+          ]
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeDataverseFlowPrimitive({
+      action: 'prepare_flow_change',
+      origin,
+      operation: 'create',
+      spec: {
+        name: 'Update contact country',
+        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
+        trigger: {
+          kind: 'dataverse-row',
+          table: 'contact',
+          change: 'update',
+          scope: 'organization'
+        },
+        actions: [
+          {
+            id: 'Set_country',
+            kind: 'update-row',
+            table: 'contact',
+            rowId: { kind: 'trigger-column', column: 'contactid' },
+            values: [
+              {
+                column: 'address1_country',
+                value: { kind: 'literal', value: 'Greece' }
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.flowChange?.after.trigger).toMatchObject({ table: 'contact' });
+    expect(result.flowChange?.after.actions[0]).toMatchObject({ table: 'contacts' });
+    const clientdata = JSON.parse(result.flowChange!.generatedClientData);
+    expect(
+      clientdata.properties.definition.triggers.When_a_row_changes.inputs.parameters[
+        'subscriptionRequest/entityname'
+      ]
+    ).toBe('contact');
+    expect(clientdata.properties.definition.actions.Set_country.inputs.parameters.entityName).toBe(
+      'contacts'
+    );
   });
 
   it('rejects unsupported lookup writes instead of emitting invalid connector payloads', async () => {
