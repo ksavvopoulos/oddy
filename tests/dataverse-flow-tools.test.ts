@@ -1,557 +1,370 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeDataverseFlowPrimitive } from '../lib/dataverse-flow-primitives';
+import type { DataverseFlowDefinition, PreparedDataverseFlowChange } from '../lib/flows/contracts';
+import {
+  beforeDefinition,
+  afterDefinition,
+  existingFlow,
+  existingWorkflowId,
+  contactAttributes,
+  flowConnections,
+  flowMetadataPayload,
+  flowOrigin as origin
+} from './fixtures/flow-definitions';
 
-const origin = 'https://contoso.crm.dynamics.com';
-const connectionReferences = {
-  value: [
-    {
-      connectionreferencelogicalname: 'cr_sharedcommondataserviceforapps',
-      connectionreferencedisplayname: 'Dataverse connection',
-      connectorid: '/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps',
-      connectionid: 'shared-connection-id',
-      ismanaged: false
-    }
-  ]
+const response = (value: unknown, status = 200, headers?: HeadersInit) =>
+  new Response(value === undefined ? null : JSON.stringify(value), { status, headers });
+const modify = (edit: (data: any) => void): DataverseFlowDefinition => {
+  const data = JSON.parse(afterDefinition.clientData);
+  edit(data);
+  return { name: 'New contact flow', clientData: JSON.stringify(data) };
 };
-const accountEntity = {
-  LogicalName: 'account',
-  EntitySetName: 'accounts',
-  PrimaryIdAttribute: 'accountid'
-};
-const accountAttributes = {
-  value: [
-    {
-      LogicalName: 'name',
-      AttributeType: 'String',
-      IsValidForRead: true,
-      IsValidForCreate: true,
-      IsValidForUpdate: true
-    },
-    {
-      LogicalName: 'accountid',
-      AttributeType: 'Uniqueidentifier',
-      IsValidForRead: true,
-      IsValidForCreate: false,
-      IsValidForUpdate: false
-    }
-  ]
-};
-
-function response(body: unknown, status = 200, headers?: HeadersInit) {
-  return new Response(body === undefined ? null : JSON.stringify(body), { status, headers });
-}
-
-function manualClientData(spec: {
-  name: string;
-  connectionReferenceLogicalName: string;
-  trigger: { kind: 'manual' };
-  actions: unknown[];
-}) {
-  return JSON.stringify({
-    properties: {
-      connectionReferences: {
-        shared_commondataserviceforapps: {
-          runtimeSource: 'embedded',
-          connection: {
-            connectionReferenceLogicalName: spec.connectionReferenceLogicalName
-          },
-          api: { name: 'shared_commondataserviceforapps' }
-        }
-      },
-      definition: {
-        triggers: {
-          manual: {
-            metadata: { oddy: { schemaVersion: 1, spec } },
-            type: 'Request',
-            kind: 'Button',
-            inputs: { schema: { type: 'object', properties: {}, required: [] } }
-          }
-        },
-        actions: {}
-      }
-    }
+const prepare = (definition: DataverseFlowDefinition) =>
+  executeDataverseFlowPrimitive({
+    action: 'prepare_flow_change',
+    origin,
+    operation: 'create',
+    definition
   });
-}
+const writes = (mock: ReturnType<typeof vi.fn>) =>
+  mock.mock.calls.filter(([, options]) => options?.method);
 
 beforeEach(() => vi.stubGlobal('window', { location: { origin } }));
 afterEach(() => vi.unstubAllGlobals());
 
-describe('Dataverse cloud-flow primitives', () => {
-  it('lists modern flows without exposing clientdata', async () => {
-    const clientdata = manualClientData({
-      name: 'Oddy flow',
-      connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-      trigger: { kind: 'manual' },
-      actions: []
-    });
-    const externallyChanged = JSON.parse(clientdata);
-    externallyChanged.properties.definition.triggers.manual.kind = 'Http';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValueOnce(
-        response({
-          value: [
-            {
-              workflowid: '00000000-0000-0000-0000-000000000010',
-              name: 'Oddy flow',
-              statecode: 0,
-              ismanaged: false,
-              clientdata,
-              '@odata.etag': 'W/"10"'
-            },
-            {
-              workflowid: '00000000-0000-0000-0000-000000000011',
-              name: 'Existing flow',
-              statecode: 1,
-              ismanaged: false,
-              clientdata: JSON.stringify(externallyChanged)
-            }
-          ]
-        })
-      )
-    );
-
-    const result = await executeDataverseFlowPrimitive({
-      action: 'list_flows',
-      origin,
-      top: 20
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.flows).toEqual([
-      expect.objectContaining({ name: 'Oddy flow', state: 'draft', oddyEditable: true }),
-      expect.objectContaining({ name: 'Existing flow', state: 'activated', oddyEditable: true })
-    ]);
-    expect(JSON.stringify(result)).not.toContain('clientdata');
-  });
-
-  it('resolves the current Power Platform environment for designer navigation', async () => {
-    const workflowId = '00000000-0000-0000-0000-000000000014';
+describe('native cloud-flow creation and validation', () => {
+  it('lists modern flows as summaries without clientdata or ownership flags', async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValue(response({ value: [existingFlow, { ...existingFlow, ismanaged: true }] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await executeDataverseFlowPrimitive({ action: 'list_flows', origin });
+    expect(result.flows).toEqual([
+      expect.objectContaining({ oddyEditable: true }),
+      expect.objectContaining({ oddyEditable: false })
+    ]);
+    expect(JSON.stringify(result)).not.toContain('clientData');
+    expect(JSON.stringify(result)).not.toContain('typedEditable');
+    expect(new Headers(fetchMock.mock.calls[0]![1]?.headers).get('MSCRM.IncludeUnpublished')).toBe(
+      'true'
+    );
+  });
+
+  it('resolves the Power Platform environment even for an unreadable flow definition', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ ...existingFlow, clientdata: '{}' }))
       .mockResolvedValueOnce(
-        response({
-          workflowid: workflowId,
-          name: 'Oddy flow',
-          category: 5,
-          type: 1,
-          statecode: 0,
-          ismanaged: false,
-          clientdata: '{}'
-        })
-      )
-      .mockResolvedValueOnce(
-        response({
-          Detail: { EnvironmentId: 'Default-00000000-0000-0000-0000-000000000001' }
-        })
+        response({ Detail: { EnvironmentId: 'Default-00000000-0000-0000-0000-000000000001' } })
       );
     vi.stubGlobal('fetch', fetchMock);
-
     const result = await executeDataverseFlowPrimitive({
       action: 'get_flow_designer_target',
       origin,
-      workflowId
+      workflowId: existingWorkflowId
     });
-
-    expect(result.flowDesignerTarget).toEqual({
-      environmentId: 'Default-00000000-0000-0000-0000-000000000001',
-      workflowId,
-      flowName: 'Oddy flow'
+    expect(result.flowDesignerTarget).toMatchObject({
+      workflowId: existingWorkflowId,
+      environmentId: 'Default-00000000-0000-0000-0000-000000000001'
     });
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('RetrieveCurrentOrganization');
+    expect(fetchMock.mock.calls[1]![0]).toContain('RetrieveCurrentOrganization');
   });
 
-  it('prepares and creates a typed Dataverse-only flow after approval', async () => {
-    const workflowId = '00000000-0000-0000-0000-000000000012';
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(response(accountEntity))
-      .mockResolvedValueOnce(response(accountAttributes))
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(response(accountEntity))
-      .mockResolvedValueOnce(response(accountAttributes))
-      .mockResolvedValueOnce(
-        response(undefined, 204, {
-          'OData-EntityId': `${origin}/api/data/v9.2/workflows(${workflowId})`
-        })
-      );
-    vi.stubGlobal('fetch', fetchMock);
-
-    const prepared = await executeDataverseFlowPrimitive({
-      action: 'prepare_flow_change',
-      origin,
-      operation: 'create',
-      spec: {
-        name: 'List one account',
-        description: 'Created by Oddy',
-        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-        trigger: {
-          kind: 'dataverse-row',
-          table: 'Accounts',
-          change: 'update',
-          scope: 'organization'
-        },
-        actions: [
-          {
-            id: 'List_accounts',
-            kind: 'list-rows',
-            table: 'Accounts',
-            selectColumns: ['Name'],
-            top: 1
-          }
-        ]
-      }
+  it('uses the same full definition for creation, validates again on approval, and creates Off', async () => {
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      const metadata = flowMetadataPayload(url);
+      if (metadata !== undefined) return response(metadata);
+      if (options?.method === 'POST')
+        return response(undefined, 204, {
+          'OData-EntityId': `${origin}/api/data/v9.2/workflows(${existingWorkflowId})`
+        });
+      throw new Error(`Unexpected request ${url}`);
     });
-
+    vi.stubGlobal('fetch', fetchMock);
+    const prepared = await prepare(afterDefinition);
     expect(prepared.ok).toBe(true);
-    expect(prepared.flowChange?.after).toMatchObject({
-      actions: [expect.objectContaining({ table: 'accounts', selectColumns: ['name'] })]
+    expect(prepared.flowChange).toMatchObject({
+      mode: 'definition',
+      operation: 'create',
+      after: afterDefinition
     });
     expect(prepared.flowChange?.warnings.join(' ')).toContain('remain Off');
-
-    const applied = await executeDataverseFlowPrimitive({
+    expect(writes(fetchMock)).toHaveLength(0);
+    const metadataBeforeApproval = fetchMock.mock.calls.length;
+    const result = await executeDataverseFlowPrimitive({
       action: 'execute_flow_change',
       origin,
       change: prepared.flowChange!
     });
-
-    expect(applied.flowChangeResult).toEqual({
+    expect(result.flowChangeResult).toEqual({
       operation: 'create',
-      workflowId,
-      name: 'List one account',
+      workflowId: existingWorkflowId,
+      name: afterDefinition.name,
       state: 'draft'
     });
-    const createCall = fetchMock.mock.calls[6]!;
-    expect(createCall[1]?.method).toBe('POST');
-    const body = JSON.parse(String(createCall[1]?.body));
-    expect(body).toMatchObject({ category: 5, type: 1, primaryentity: 'none' });
-    const clientdata = JSON.parse(body.clientdata);
-    expect(
-      clientdata.properties.connectionReferences.shared_commondataserviceforapps.connection
-        .connectionReferenceLogicalName
-    ).toBe('cr_sharedcommondataserviceforapps');
-    expect(
-      clientdata.properties.definition.triggers.When_a_row_changes.inputs.parameters[
-        'subscriptionRequest/entityname'
-      ]
-    ).toBe('account');
-    expect(clientdata.properties.definition.actions.List_accounts.inputs.host.operationId).toBe(
-      'ListRecords'
-    );
-    expect(clientdata.properties.definition.actions.List_accounts.inputs.parameters).toEqual({
-      entityName: 'accounts',
-      $select: 'name',
-      $top: 1
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(metadataBeforeApproval + 1);
+    expect(writes(fetchMock)).toHaveLength(1);
+    const body = JSON.parse(String(writes(fetchMock)[0]![1]?.body));
+    expect(body).toEqual({
+      category: 5,
+      type: 1,
+      primaryentity: 'none',
+      statecode: 0,
+      name: afterDefinition.name,
+      description: afterDefinition.description,
+      clientdata: afterDefinition.clientData
     });
+    expect(body.clientdata).not.toContain('"oddy"');
+    expect(fetchMock.mock.calls.some(([url]) => /Publish|Activate/.test(url))).toBe(false);
   });
 
-  it('keeps trigger table names logical but uses entity-set names for update actions', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(
-        response({
-          LogicalName: 'contact',
-          EntitySetName: 'contacts',
-          PrimaryIdAttribute: 'contactid'
-        })
-      )
-      .mockResolvedValueOnce(
-        response({
-          value: [
-            {
-              LogicalName: 'contactid',
-              AttributeType: 'Uniqueidentifier',
-              IsValidForRead: true,
-              IsValidForUpdate: false
-            },
-            {
-              LogicalName: 'address1_country',
-              AttributeType: 'String',
-              IsValidForRead: true,
-              IsValidForUpdate: true
-            }
-          ]
-        })
-      );
+  it('lists and validates non-Dataverse connection references without filtering them out', async () => {
+    const outlook = {
+      connectionreferencelogicalname: 'cr_outlook',
+      connectorid: '/providers/Microsoft.PowerApps/apis/shared_office365'
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/connectionreferences'))
+        return response({ value: [...flowConnections.value, outlook] });
+      const metadata = flowMetadataPayload(url);
+      if (metadata !== undefined) return response(metadata);
+      throw new Error('Unexpected request');
+    });
     vi.stubGlobal('fetch', fetchMock);
-
-    const result = await executeDataverseFlowPrimitive({
-      action: 'prepare_flow_change',
-      origin,
-      operation: 'create',
-      spec: {
-        name: 'Update contact country',
-        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-        trigger: {
-          kind: 'dataverse-row',
-          table: 'contact',
-          change: 'update',
-          scope: 'organization'
-        },
-        actions: [
-          {
-            id: 'Set_country',
-            kind: 'update-row',
-            table: 'contact',
-            rowId: { kind: 'trigger-column', column: 'contactid' },
-            values: [
-              {
-                column: 'address1_country',
-                value: { kind: 'literal', value: 'Greece' }
-              }
-            ]
-          }
-        ]
-      }
+    const listed = await executeDataverseFlowPrimitive({
+      action: 'list_flow_connection_references',
+      origin
     });
-
-    expect(result.ok).toBe(true);
-    expect(result.flowChange?.after).toMatchObject({
-      trigger: { table: 'contact' },
-      actions: [expect.objectContaining({ table: 'contacts' })]
-    });
-    const clientdata = JSON.parse(result.flowChange!.generatedClientData);
-    expect(
-      clientdata.properties.definition.triggers.When_a_row_changes.inputs.parameters[
-        'subscriptionRequest/entityname'
-      ]
-    ).toBe('contact');
-    expect(clientdata.properties.definition.actions.Set_country.inputs.parameters.entityName).toBe(
-      'contacts'
-    );
-  });
-
-  it('rejects unsupported lookup writes instead of emitting invalid connector payloads', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(response(accountEntity))
-      .mockResolvedValueOnce(
-        response({
-          value: [
-            {
-              LogicalName: 'primarycontactid',
-              AttributeType: 'Lookup',
-              IsValidForRead: true,
-              IsValidForCreate: true,
-              IsValidForUpdate: true
-            }
-          ]
-        })
-      );
-    vi.stubGlobal('fetch', fetchMock);
-
-    const result = await executeDataverseFlowPrimitive({
-      action: 'prepare_flow_change',
-      origin,
-      operation: 'create',
-      spec: {
-        name: 'Unsupported lookup flow',
-        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-        trigger: { kind: 'manual' },
-        actions: [
-          {
-            id: 'Create_account',
-            kind: 'add-row',
-            table: 'account',
-            values: [
-              {
-                column: 'primarycontactid',
-                value: { kind: 'literal', value: '00000000-0000-0000-0000-000000000099' }
-              }
-            ]
-          }
-        ]
-      }
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain('unsupported flow-write type Lookup');
-  });
-
-  it.each([0, 1])(
-    'saves only an unpublished draft with an exact ETag (runtime state %s)',
-    async (runtimeState) => {
-      const workflowId = '00000000-0000-0000-0000-000000000013';
-      const spec = {
-        name: 'Existing draft',
-        connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-        trigger: { kind: 'manual' as const },
-        actions: []
+    expect(listed.connectionReferences?.map((item) => item.logicalName)).toContain('cr_outlook');
+    expect(new URL(fetchMock.mock.calls[0]![0]).searchParams.has('$filter')).toBe(false);
+    const definition = modify((data) => {
+      data.properties.connectionReferences.outlook = {
+        connection: { connectionReferenceLogicalName: 'cr_outlook' },
+        api: { name: 'shared_office365' }
       };
-      const flow = {
-        workflowid: workflowId,
-        name: spec.name,
-        statecode: runtimeState,
-        componentstate: 1,
-        ismanaged: false,
-        clientdata: manualClientData(spec),
-        '@odata.etag': 'W/"draft-1"'
+      data.properties.definition.actions.Mail = {
+        type: 'OpenApiConnection',
+        runAfter: { Repeat_audit: ['Succeeded'] },
+        inputs: {
+          host: { connectionReferenceName: 'outlook', operationId: 'SendEmailV2' },
+          parameters: { 'emailMessage/To': 'test@example.com' }
+        }
       };
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(response(connectionReferences))
-        .mockResolvedValueOnce(response(flow))
-        .mockResolvedValueOnce(response(connectionReferences))
-        .mockResolvedValueOnce(response(flow))
-        .mockResolvedValueOnce(response(undefined, 204));
-      vi.stubGlobal('fetch', fetchMock);
-      const prepared = await executeDataverseFlowPrimitive({
-        action: 'prepare_flow_change',
-        origin,
-        operation: 'update',
-        workflowId,
-        spec: { ...spec, name: 'Fixed draft' }
-      });
-      expect(prepared.ok).toBe(true);
-      expect(prepared.flowChange?.saveMode).toBe('draft');
-      expect(prepared.flowChange?.before?.componentState).toBe(1);
-      expect(prepared.flowChange?.warnings.join(' ')).toContain('does not publish');
-      const result = await executeDataverseFlowPrimitive({
-        action: 'execute_flow_change',
-        origin,
-        change: prepared.flowChange!
-      });
-      expect(result.flowChangeResult).toMatchObject({
-        savedAs: 'unpublished-draft',
-        state: runtimeState === 1 ? 'activated' : 'draft'
-      });
-      for (const index of [1, 3]) {
-        const options = fetchMock.mock.calls[index]![1] as RequestInit;
-        expect(new Headers(options.headers).get('MSCRM.IncludeUnpublished')).toBe('true');
-      }
-      const patch = fetchMock.mock.calls[4]![1] as RequestInit;
-      expect(patch.method).toBe('PATCH');
-      expect(new Headers(patch.headers).get('MSCRM.AsUnpublished')).toBe('true');
-      expect(new Headers(patch.headers).get('If-Match')).toBe('W/"draft-1"');
-      expect(new Headers(patch.headers).has('MSCRM.SkipComponentVersioning')).toBe(false);
-      const body = JSON.parse(String(patch.body));
-      expect(Object.keys(body).sort()).toEqual(['clientdata', 'description', 'name']);
-      expect(body.name).toBe('Fixed draft');
-      expect(fetchMock).toHaveBeenCalledTimes(5);
-      expect(fetchMock.mock.calls.some(([url]) => /Publish|Activate/.test(String(url)))).toBe(
-        false
-      );
-    }
-  );
+    });
+    expect((await prepare(definition)).ok).toBe(true);
+    expect(writes(fetchMock)).toHaveLength(0);
+  });
 
   it.each([
-    ['missing draft consent', 'legacy'],
-    ['managed draft', 'managed'],
-    ['unrecognized draft', 'unsupported'],
-    ['changed component state', 'component-change'],
-    ['server version conflict', 'conflict'],
-    ['server draft-save failure', 'draft-error']
-  ])('does not publish or retry after %s', async (_label, scenario) => {
-    const workflowId = '00000000-0000-0000-0000-000000000013';
-    const spec = {
-      name: 'Existing draft',
-      connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-      trigger: { kind: 'manual' as const },
-      actions: []
-    };
-    const flow = {
-      workflowid: workflowId,
-      name: spec.name,
-      statecode: 0,
-      componentstate: 1,
-      ismanaged: false,
-      clientdata: manualClientData(spec),
-      '@odata.etag': 'W/"1"'
-    };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(response(flow));
+    [
+      'wrong action table',
+      (data: any) => {
+        data.properties.definition.actions.If_Patras.actions.Set_Country_Greece.inputs.parameters.entityName =
+          'contact';
+      },
+      'Use contacts, not contact'
+    ],
+    [
+      'wrong trigger table',
+      (data: any) => {
+        data.properties.definition.triggers.On_contact_changed.inputs.parameters[
+          'subscriptionRequest/entityname'
+        ] = 'contacts';
+      },
+      'Use contact, not contacts'
+    ],
+    [
+      'unknown write column',
+      (data: any) => {
+        data.properties.definition.actions.If_Patras.actions.Set_Country_Greece.inputs.parameters[
+          'item/not_a_column'
+        ] = 'x';
+      },
+      'Could not resolve contact.not_a_column'
+    ],
+    [
+      'read-only write column',
+      (data: any) => {
+        data.properties.definition.actions.If_Patras.actions.Set_Country_Greece.inputs.parameters[
+          'item/contactid'
+        ] = 'x';
+      },
+      'cannot be used for update'
+    ],
+    [
+      'wrong literal type',
+      (data: any) => {
+        data.properties.definition.actions.If_Patras.actions.Set_Country_Greece.inputs.parameters[
+          'item/address1_country'
+        ] = 123;
+      },
+      'requires a text literal'
+    ],
+    [
+      'missing connection',
+      (data: any) => {
+        data.properties.connectionReferences.dataverse.connection.connectionReferenceLogicalName =
+          'invented';
+      },
+      'was not found'
+    ],
+    [
+      'wrong connector',
+      (data: any) => {
+        data.properties.connectionReferences.dataverse.api.name = 'shared_office365';
+      },
+      'does not match'
+    ],
+    [
+      'no binding',
+      (data: any) => {
+        delete data.properties.definition.actions.If_Patras.actions.Set_Country_Greece.inputs.host
+          .connectionName;
+      },
+      'must specify an existing connection reference'
+    ],
+    [
+      'missing alias',
+      (data: any) => {
+        data.properties.definition.actions.If_Patras.actions.Set_Country_Greece.inputs.host.connectionName =
+          'not_defined';
+      },
+      'missing from clientdata'
+    ],
+    [
+      'invalid nested action',
+      (data: any) => {
+        delete data.properties.definition.actions.Repeat_audit.actions.Compose_item.type;
+      },
+      'must have a name and type'
+    ],
+    [
+      'invalid dependency',
+      (data: any) => {
+        data.properties.definition.actions.Audit.runAfter = { Missing: ['Succeeded'] };
+      },
+      'invalid runAfter'
+    ],
+    [
+      'dependency cycle',
+      (data: any) => {
+        data.properties.definition.actions.Audit.runAfter = { Repeat_audit: ['Succeeded'] };
+      },
+      'circular runAfter'
+    ]
+  ])('refuses %s before any write', async (_label, change, expected) => {
+    const fetchMock = vi.fn(async (url: string) => response(flowMetadataPayload(url)));
     vi.stubGlobal('fetch', fetchMock);
-    const prepared = await executeDataverseFlowPrimitive({
-      action: 'prepare_flow_change',
-      origin,
-      operation: 'update',
-      workflowId,
-      spec: { ...spec, name: 'Fixed draft' }
-    });
-    expect(prepared.ok).toBe(true);
-    fetchMock.mockClear();
-    fetchMock
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(
-        response({
-          ...flow,
-          ...(scenario === 'managed' ? { ismanaged: true } : {}),
-          ...(scenario === 'unsupported' ? { clientdata: '{}' } : {}),
-          ...(scenario === 'component-change' ? { componentstate: 0 } : {})
-        })
-      )
-      .mockResolvedValueOnce(
-        response(
-          {
-            error: {
-              message:
-                scenario === 'conflict' ? 'Precondition failed' : 'Unpublished context rejected'
-            }
-          },
-          scenario === 'conflict' ? 412 : 400
-        )
-      );
-    const change = { ...prepared.flowChange! };
-    if (scenario === 'legacy') delete change.saveMode;
-    const result = await executeDataverseFlowPrimitive({
-      action: 'execute_flow_change',
-      origin,
-      change
-    });
+    const result = await prepare(modify(change));
     expect(result.ok).toBe(false);
-    const writes = fetchMock.mock.calls.filter(
-      ([, options]) => (options as RequestInit)?.method === 'PATCH'
-    );
-    expect(writes).toHaveLength(['conflict', 'draft-error'].includes(scenario) ? 1 : 0);
-    expect(fetchMock.mock.calls.some(([url]) => /Publish|Activate/.test(String(url)))).toBe(false);
-    if (scenario === 'legacy') expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.error).toContain(expected);
+    expect(writes(fetchMock)).toHaveLength(0);
   });
 
-  it('rejects a stale Oddy-created flow update', async () => {
-    const workflowId = '00000000-0000-0000-0000-000000000013';
-    const spec = {
-      name: 'Oddy flow',
-      connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-      trigger: { kind: 'manual' as const },
-      actions: []
-    };
-    const clientdata = manualClientData(spec);
-    const flow = {
-      workflowid: workflowId,
-      name: spec.name,
-      statecode: 1,
-      ismanaged: false,
-      clientdata,
-      '@odata.etag': 'W/"1"'
-    };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(response(flow))
-      .mockResolvedValueOnce(response(connectionReferences))
-      .mockResolvedValueOnce(response({ ...flow, '@odata.etag': 'W/"2"' }));
+  it('rejects deleting a binding still used by otherwise unchanged actions', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const metadata = flowMetadataPayload(url);
+      return response(metadata === undefined ? existingFlow : metadata);
+    });
     vi.stubGlobal('fetch', fetchMock);
-
-    const prepared = await executeDataverseFlowPrimitive({
+    const data = JSON.parse(beforeDefinition.clientData);
+    delete data.properties.connectionReferences.dataverse;
+    const result = await executeDataverseFlowPrimitive({
       action: 'prepare_flow_change',
       origin,
       operation: 'update',
-      workflowId,
-      spec: { ...spec, name: 'Renamed Oddy flow' }
+      workflowId: existingWorkflowId,
+      etag: existingFlow['@odata.etag'],
+      definition: { ...beforeDefinition, clientData: JSON.stringify(data) }
     });
-    const applied = await executeDataverseFlowPrimitive({
+    expect(result.error).toContain('missing from clientdata');
+    expect(writes(fetchMock)).toHaveLength(0);
+  });
+
+  it('validates selected and sorted columns and checks changed metadata again before creation', async () => {
+    let readable = true;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/Attributes'))
+        return response({
+          value: contactAttributes.value.map((item) => ({ ...item, IsValidForRead: readable }))
+        });
+      return response(flowMetadataPayload(url));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const definition = modify((data) => {
+      data.properties.definition.actions = {
+        List: {
+          type: 'OpenApiConnection',
+          runAfter: {},
+          inputs: {
+            host: { connectionName: 'dataverse', operationId: 'ListRecords' },
+            parameters: {
+              entityName: 'contacts',
+              $select: 'address1_city',
+              $orderby: 'address1_country asc'
+            }
+          }
+        }
+      };
+    });
+    const prepared = await prepare(definition);
+    expect(prepared.ok).toBe(true);
+    readable = false;
+    const result = await executeDataverseFlowPrimitive({
       action: 'execute_flow_change',
       origin,
       change: prepared.flowChange!
     });
+    expect(result.error).toContain('cannot be used for read');
+    expect(writes(fetchMock)).toHaveLength(0);
+  });
 
-    expect(applied.ok).toBe(false);
-    expect(applied.error).toContain('changed after this preview');
-    expect(fetchMock.mock.calls.some((call) => call[1]?.method === 'PATCH')).toBe(false);
+  it('validates nested switch/default actions and supports expressions without a typed value wrapper', async () => {
+    const fetchMock = vi.fn(async (url: string) => response(flowMetadataPayload(url)));
+    vi.stubGlobal('fetch', fetchMock);
+    const definition = modify((data) => {
+      const update = data.properties.definition.actions.If_Patras.actions.Set_Country_Greece;
+      update.inputs.parameters['item/address1_country'] =
+        "@coalesce(triggerBody()?['address1_country'], 'Greece')";
+      data.properties.definition.actions = {
+        Choose: {
+          type: 'Switch',
+          expression: '@triggerBody()',
+          runAfter: {},
+          cases: { Patras: { case: 'Patras', actions: { Update: update } } },
+          default: { actions: {} }
+        }
+      };
+    });
+    expect((await prepare(definition)).ok).toBe(true);
+    const invalid = JSON.parse(definition.clientData);
+    delete invalid.properties.definition.actions.Choose.cases.Patras.actions.Update.type;
+    expect((await prepare({ ...definition, clientData: JSON.stringify(invalid) })).ok).toBe(false);
+  });
+
+  it('rejects legacy typed previews without writing and does not recreate an existing flow', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const legacy = {
+      operation: 'create',
+      environmentOrigin: origin,
+      after: { name: 'Old', trigger: { kind: 'manual' }, actions: [] }
+    } as unknown as PreparedDataverseFlowChange;
+    const result = await executeDataverseFlowPrimitive({
+      action: 'execute_flow_change',
+      origin,
+      change: legacy
+    });
+    expect(result.error).toContain('legacy flow preview');
+    expect(fetchMock).not.toHaveBeenCalled();
+    const rejected = await executeDataverseFlowPrimitive({
+      action: 'prepare_flow_change',
+      operation: 'create',
+      origin,
+      workflowId: existingWorkflowId,
+      definition: beforeDefinition
+    });
+    expect(rejected.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

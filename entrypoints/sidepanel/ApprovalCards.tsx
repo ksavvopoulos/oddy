@@ -127,13 +127,11 @@ export function FlowChangeCards({ item, approvals }: Props) {
         <div className="mutation-list">
           {item.pendingFlowChanges.map((change) => {
             const approval = flowChangeApprovals[change.id] || { status: 'pending' as const };
-            const editable = !approvals.blocked && canEditApproval(approval, item.historical);
-            const typed = change.mode !== 'definition' ? change.after : undefined;
-            const trigger = typed
-              ? typed.trigger.kind === 'manual'
-                ? 'Manual button trigger'
-                : `${typed.trigger.change} on ${typed.trigger.table} · ${typed.trigger.scope}`
-              : undefined;
+            const legacy =
+              change.mode !== 'definition' || typeof change.after?.clientData !== 'string';
+            const editable =
+              !legacy && !approvals.blocked && canEditApproval(approval, item.historical);
+            const before = change.before?.definition;
             return (
               <section key={change.id} className={`mutation-card ${approval.status}`}>
                 <div className="mutation-heading">
@@ -159,60 +157,45 @@ export function FlowChangeCards({ item, approvals }: Props) {
                       </small>
                     </div>
                   )}
-                  {change.mode === 'definition' && (
+                  {legacy ? (
                     <div className="skill-change-workflow">
-                      <span>Definition changes</span>
-                      <ul>
-                        {flowDefinitionDifferences(change.before.definition, change.after).map(
-                          (difference) => (
-                            <li key={difference.path}>
-                              <strong>{difference.path}</strong>
-                              <pre className="flow-action-spec">{`Before: ${JSON.stringify(difference.before, null, 2) ?? '(absent)'}\nAfter: ${JSON.stringify(difference.after, null, 2) ?? '(removed)'}`}</pre>
-                            </li>
-                          )
-                        )}
-                      </ul>
-                      <details>
-                        <summary>Complete definition before</summary>
-                        <pre className="flow-action-spec">
-                          {JSON.stringify(JSON.parse(change.before.definition.clientData), null, 2)}
-                        </pre>
-                      </details>
-                      <details>
+                      <p className="mutation-note">
+                        This legacy flow preview cannot be applied. Prepare a fresh complete
+                        definition preview.
+                      </p>
+                      <pre className="flow-action-spec">
+                        {JSON.stringify(change.after, null, 2)}
+                      </pre>
+                    </div>
+                  ) : (
+                    <div className="skill-change-workflow">
+                      <span>{before ? 'Definition changes' : 'New flow definition'}</span>
+                      {before && (
+                        <>
+                          <ul>
+                            {flowDefinitionDifferences(before, change.after).map((difference) => (
+                              <li key={difference.path}>
+                                <strong>{difference.path}</strong>
+                                <pre className="flow-action-spec">{`Before: ${JSON.stringify(difference.before, null, 2) ?? '(absent)'}\nAfter: ${JSON.stringify(difference.after, null, 2) ?? '(removed)'}`}</pre>
+                              </li>
+                            ))}
+                          </ul>
+                          <details>
+                            <summary>Complete definition before</summary>
+                            <pre className="flow-action-spec">
+                              {JSON.stringify(JSON.parse(before.clientData), null, 2)}
+                            </pre>
+                          </details>
+                        </>
+                      )}
+                      {change.after.description !== undefined && <p>{change.after.description}</p>}
+                      <details open={change.operation === 'create'}>
                         <summary>Complete definition after</summary>
                         <pre className="flow-action-spec">
                           {JSON.stringify(JSON.parse(change.after.clientData), null, 2)}
                         </pre>
                       </details>
                     </div>
-                  )}
-                  {typed && (
-                    <>
-                      <div className="skill-change-tools">
-                        <span>Trigger</span>
-                        <small>{trigger}</small>
-                        <pre className="flow-action-spec">
-                          {JSON.stringify(typed.trigger, null, 2)}
-                        </pre>
-                      </div>
-                      <div className="skill-change-tools">
-                        <span>Connection reference</span>
-                        <small>{typed.connectionReferenceLogicalName}</small>
-                      </div>
-                      <div className="skill-change-workflow">
-                        <span>Sequential actions</span>
-                        <ol>
-                          {typed.actions.map((action) => (
-                            <li key={action.id}>
-                              <strong>{action.id}</strong>: {action.kind} on {action.table}
-                              <pre className="flow-action-spec">
-                                {JSON.stringify(action, null, 2)}
-                              </pre>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    </>
                   )}
                   {change.warnings.map((warning) => (
                     <p key={warning} className="mutation-note">
@@ -226,7 +209,7 @@ export function FlowChangeCards({ item, approvals }: Props) {
                     ? 'This historical flow preview cannot be applied. Prepare a fresh preview to continue.'
                     : change.saveMode === 'draft'
                       ? 'Only an unpublished draft will be saved. Publishing and activation require a separate step. Review any connection-reference changes above.'
-                      : 'Oddy will write only this validated flow definition. Connection credentials are not changed.'}
+                      : 'The new flow will be created Off. Review its complete definition and connection references before approving.'}
                 </p>
                 {approval.error && <p className="mutation-error">{approval.error}</p>}
                 {approval.status === 'approved' && approval.result && (

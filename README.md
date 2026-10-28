@@ -13,9 +13,9 @@ Oddy is a Chrome Manifest V3 side-panel navigator that reads the active Microsof
 - Protects skill edits with revision checks and keeps bundled skills immutable
 - Restricts each active skill to its declared Dataverse tools and validates required inputs before execution
 - Exports standard `SKILL.md` instructions alongside an Oddy workflow JSON definition
-- Gives Azure OpenAI composable schema/query/navigation tools, typed cloud-flow primitives, and preparation-only bulk-job tools, without exposing write execution
+- Gives Azure OpenAI composable schema/query/navigation tools, native cloud-flow definition tools, and preparation-only bulk-job tools, without exposing write execution
 - Lists modern cloud flows and existing Dataverse connection references, reads complete saved definitions, opens exact flows in Power Automate, and prepares approval-gated creates or general edits
-- Creates Dataverse-only flows from a constrained graph of manual/row triggers and sequential list/get/add/update-row actions; new flows remain Off by default
+- Creates and edits native Power Automate definitions, including conditions, loops, branches, expressions, and existing connectors; new flows remain Off
 - Uses a shared structured query model for filters, selected columns, sorting, row limits, view FetchXML, and grid layouts
 - Resolves table and column display names to logical metadata at runtime, including valid target tables for lookup columns
 - Composes multi-step workflows such as finding a named contact, discovering its invoice relationship, creating `AI Result`, navigating to it, and opening its first sorted record
@@ -98,13 +98,13 @@ Tool-enabled prompts use the Azure OpenAI Responses API so reasoning models can 
 
 ## Cloud-flow workflows
 
-Oddy manages modern cloud flows through the signed-in Dataverse `workflows` Web API. New flows use a typed Dataverse-only graph: Oddy resolves metadata, validates an existing connection reference, compiles the definition, and shows the complete trigger/action specification before approval. Existing unmanaged flows support general definition edits, regardless of who created them. Oddy reads their complete saved `clientdata` and row version, then proposes a revised definition for explicit approval.
+Oddy manages modern cloud flows through the signed-in Dataverse `workflows` Web API. Creation and editing use the same native definition format: a name, description, and complete `clientdata` JSON document. There is no separate Oddy flow language, compiler, or ownership requirement. For existing unmanaged flows, Oddy reads the latest saved definition and row version and preserves unrelated content when preparing changes for explicit approval.
 
-The first version supports manual or Dataverse row create/update/delete triggers and sequential Dataverse list/get/add/update-row actions. Trigger definitions use Dataverse logical table names such as `contact`, while connector actions are compiled with the required entity-set names such as `contacts`. Oddy can resolve the current Power Platform environment through Dataverse and open an exact workflow ID directly in a new Power Automate designer tab. Creates go to the environment's default solution and remain **Off**. Updates require an exact workflow ID and ETag. General edits support triggers, conditions, loops, parallel branches, nested actions, expressions, and existing connectors without an Oddy ownership marker. Approval shows every changed JSON path and expandable complete before/after definitions, including connection references. Unrelated content must be preserved. General edits receive structural checks, not full connector/expression validation; review and validate in Power Automate before publishing. Managed flows and missing, malformed, or over-1-MB definitions remain inspection-only.
+Definitions support triggers, conditions, loops, parallel branches, nested actions, expressions, and existing connectors. Oddy checks nested action structure and dependencies, verifies new/changed connection references against Dataverse, and checks static Dataverse table/column names and basic literal types in changed connector nodes. Webhook triggers require logical table names such as `contact`; actions require entity-set names such as `contacts`. Unrelated existing nodes and legacy metadata are preserved, not regenerated. Dynamic bindings, lookup targets, full connector schemas, and expression semantics still need review and validation in Power Automate. Approval shows the complete new definition for creates, or changed JSON paths and complete before/after documents for updates. Creates go to the default solution and remain **Off**. Updates require the exact workflow ID and ETag. Managed flows and malformed, over-1-MB, over-1,000-node, or over-50-level definitions remain inspection-only. Oddy can open an exact flow directly in Power Automate.
 
 ### Saving existing flow drafts
 
-Flow updates read the latest unpublished definition with `MSCRM.IncludeUnpublished: true` and save using `MSCRM.AsUnpublished: true` plus the exact captured ETag. The approval explicitly authorizes **Save cloud-flow draft**, not publication or activation. Existing published automation is not intentionally changed; publish separately in Power Automate after review. Older update previews must be prepared again. There is no automatic publish, activation, deletion of drafts, or fallback retry after a save failure.
+Flow updates read the latest unpublished definition with `MSCRM.IncludeUnpublished: true` and save using `MSCRM.AsUnpublished: true` plus the exact captured ETag. The approval explicitly authorizes **Save cloud-flow draft**, not publication or activation. Existing published automation is not intentionally changed; publish separately in Power Automate after review. Legacy typed previews cannot execute and must be prepared again; their saved history remains readable. There is no automatic publish, activation, deletion of drafts, or fallback retry after a save failure.
 
 The draft-save header has limited public Microsoft documentation; validate it in a development tenant before relying on this path. Automated tests verify the request contract and approval boundaries, not server-side header behavior. If the tenant rejects the draft request, Oddy stops and reports the error rather than retrying a published update.
 
@@ -167,9 +167,9 @@ lib/
   browser/                Active-tab context, navigation, injection, refresh
   bulk/                   Strict plans, dataset parsing, local jobs, derived counts, transport, recovery
   dataverse/              Primitive request/result and metadata contracts
-  flows/                  Typed cloud-flow graph, proposal, and execution contracts
+  flows/                  Native definition/proposal contracts and approval diffs
   dataverse-primitives.ts Self-contained signed-session page executor
-  dataverse-flow-primitives.ts Self-contained cloud-flow reader/compiler/executor
+  dataverse-flow-primitives.ts Self-contained flow reader/validator/executor
   approvals.ts            Shared approval rules and synchronous execution lock
   approval-continuation.ts Request-scoped post-approval continuation guards
   conversation-model.ts   Transcript contracts, restoration, authoritative history
@@ -208,7 +208,7 @@ Development commands:
 - Personal-view primitives are locked to the name `AI Result`. For each target table, the executor reuses the oldest matching view and updates it instead of creating another. Existing duplicates are left untouched.
 - Structured queries and view layouts require requested columns to be readable and resolvable from the target table's localized metadata.
 - Approved business-record writes support scalar text, number, boolean, date, null, Choice/State/Status labels resolved through option metadata, and single-record Lookup, Owner, and Customer values. Lookup targets are validated through metadata and written with the resolved Dataverse navigation property. Clearing lookups, party-list fields, and multi-select updates are not yet supported.
-- Cloud-flow creation remains typed and Dataverse-only: one existing connection reference, a linear action chain, scalar literals/row outputs, and the default solution. Existing unmanaged flows support approval-gated complete definition edits, including conditions, loops, branches, expressions, and existing connectors. General edits rely on structural validation and user review, not full Power Automate schema validation. Managed flows, solution selection, publication, activation/deactivation, deletion, sharing, and connection creation are not supported.
+- Cloud-flow creates and updates use complete native definitions with explicit approval. Validation checks graph structure, relevant connection references, and static Dataverse metadata, not full Power Automate schemas or expression semantics. Review and validate in Power Automate before publishing. Managed flows, solution selection, publication, activation/deactivation, deletion, sharing, and connection creation are not supported.
 - Marketing-list membership is limited to static lists and one member table per job. Query-backed jobs page all matching accounts, contacts, or leads within the stated bulk limits; the explicit-ID tool retains its 50-member limit. Dynamic-list membership remains query-driven.
 - User time-zone settings use documented `usersettingscollection`, `timezonedefinitions`, and `LocalTimeFromUtcTime` reads. If these are denied, the current Xrm user offset can provide a clearly labeled fallback; it is not a historical/future daylight-saving rule. Browser settings are never silently substituted for Dataverse user settings.
 - The selected Azure OpenAI deployment and resource region must support the Responses API for related-record tools.

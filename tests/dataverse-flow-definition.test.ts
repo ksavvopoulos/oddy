@@ -7,11 +7,18 @@ import {
   definitionProposal,
   existingFlow,
   existingWorkflowId,
-  flowOrigin as origin
+  flowOrigin as origin,
+  flowMetadataPayload
 } from './fixtures/flow-definitions';
 
 const response = (value: unknown, status = 200) =>
   new Response(value === undefined ? null : JSON.stringify(value), { status });
+function stubFetch(handler: (url: string, options?: RequestInit) => Promise<Response>) {
+  vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+    const metadata = flowMetadataPayload(String(url));
+    return metadata === undefined ? handler(url, options) : response(metadata);
+  });
+}
 const prepareRequest = {
   action: 'prepare_flow_change' as const,
   origin,
@@ -27,7 +34,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe('approval-gated general cloud-flow definition edits', () => {
   it('reads a non-Oddy flow with its full definition and exact row version', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response(existingFlow));
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch(fetchMock);
     const result = await executeDataverseFlowPrimitive({
       action: 'get_flow',
       origin,
@@ -35,11 +42,11 @@ describe('approval-gated general cloud-flow definition edits', () => {
     });
     expect(result.flow).toMatchObject({
       oddyEditable: true,
-      typedEditable: false,
       definition: beforeDefinition,
       etag: existingFlow['@odata.etag']
     });
-    expect(result.flow?.spec).toBeUndefined();
+    expect(result.flow).not.toHaveProperty('spec');
+    expect(result.flow).not.toHaveProperty('typedEditable');
     const options = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(new Headers(options.headers).get('MSCRM.IncludeUnpublished')).toBe('true');
   });
@@ -50,7 +57,7 @@ describe('approval-gated general cloud-flow definition edits', () => {
       .mockResolvedValueOnce(response(existingFlow))
       .mockResolvedValueOnce(response(existingFlow))
       .mockResolvedValueOnce(response(undefined, 204));
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch(fetchMock);
     const prepared = await executeDataverseFlowPrimitive(prepareRequest);
     expect(prepared.ok).toBe(true);
     expect(prepared.flowChange).toMatchObject({
@@ -111,8 +118,7 @@ describe('approval-gated general cloud-flow definition edits', () => {
         actions: []
       }
     };
-    vi.stubGlobal(
-      'fetch',
+    stubFetch(
       vi.fn().mockResolvedValue(
         response({
           ...existingFlow,
@@ -123,14 +129,13 @@ describe('approval-gated general cloud-flow definition edits', () => {
     const prepared = await executeDataverseFlowPrimitive(prepareRequest);
     expect(prepared.ok).toBe(true);
     expect(prepared.flowChange?.before).toMatchObject({
-      oddyEditable: true,
-      typedEditable: false
+      oddyEditable: true
     });
     expect(prepared.flowChange?.mode).toBe('definition');
   });
 
   it('preserves an omitted description rather than clearing it implicitly', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(existingFlow)));
+    stubFetch(vi.fn().mockResolvedValue(response(existingFlow)));
     const prepared = await executeDataverseFlowPrimitive({
       ...prepareRequest,
       definition: { name: afterDefinition.name, clientData: afterDefinition.clientData }
@@ -139,7 +144,7 @@ describe('approval-gated general cloud-flow definition edits', () => {
   });
 
   it('allows clearing the description when the proposal explicitly requests it', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(existingFlow)));
+    stubFetch(vi.fn().mockResolvedValue(response(existingFlow)));
     const prepared = await executeDataverseFlowPrimitive({
       ...prepareRequest,
       definition: { ...afterDefinition, description: '' }
@@ -168,7 +173,7 @@ describe('approval-gated general cloud-flow definition edits', () => {
     ]
   ])('refuses preparation for %s', async (_label, flow, etag) => {
     const fetchMock = vi.fn().mockResolvedValue(response(flow));
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch(fetchMock);
     const result = await executeDataverseFlowPrimitive({ ...prepareRequest, etag });
     expect(result.ok).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -187,7 +192,7 @@ describe('approval-gated general cloud-flow definition edits', () => {
     'x'.repeat(1_000_001)
   ])('rejects malformed or oversized proposed clientdata (%#)', async (clientData) => {
     const fetchMock = vi.fn().mockResolvedValue(response(existingFlow));
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch(fetchMock);
     const result = await executeDataverseFlowPrimitive({
       ...prepareRequest,
       definition: { ...afterDefinition, clientData }
@@ -217,7 +222,7 @@ describe('approval-gated general cloud-flow definition edits', () => {
     if (scenario === 'snapshot') current.clientdata = afterDefinition.clientData;
     if (scenario === 'name') current.name = 'Changed externally';
     const fetchMock = vi.fn().mockResolvedValue(response(current));
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch(fetchMock);
     const result = await executeDataverseFlowPrimitive({
       action: 'execute_flow_change',
       origin,
@@ -236,7 +241,7 @@ describe('approval-gated general cloud-flow definition edits', () => {
         .fn()
         .mockResolvedValueOnce(response(existingFlow))
         .mockResolvedValueOnce(response({ error: 'Draft save rejected' }, status));
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch(fetchMock);
       const result = await executeDataverseFlowPrimitive({
         action: 'execute_flow_change',
         origin,

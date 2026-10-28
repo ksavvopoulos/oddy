@@ -10,6 +10,7 @@ import {
 import type { ApprovalActions } from '../entrypoints/sidepanel/useApprovals';
 import { conversationFixture, flowProposal } from './fixtures/proposals';
 import { definitionProposal } from './fixtures/flow-definitions';
+import type { PreparedDataverseFlowChange } from '../lib/flows/contracts';
 
 function approvalActions(): ApprovalActions {
   const conversation = conversationFixture();
@@ -47,6 +48,34 @@ function approvalActions(): ApprovalActions {
 }
 
 describe('Cloud-flow draft save disclosure', () => {
+  it('shows the full native definition for creation without typed trigger/action views', () => {
+    const item = { ...conversationFixture().transcript[1]!, pendingFlowChanges: [flowProposal] };
+    const html = renderToStaticMarkup(
+      createElement(FlowChangeCards, { item, approvals: approvalActions() })
+    );
+    expect(html).toContain('New flow definition');
+    expect(html).toContain('Complete definition after');
+    expect(html).toContain('Compose');
+    expect(html).toContain('created Off');
+    expect(html).toContain('Approve create');
+    expect(html).not.toContain('Sequential actions');
+  });
+
+  it('keeps legacy typed previews readable but never offers approval', () => {
+    const legacy = {
+      ...flowProposal,
+      mode: undefined,
+      after: { name: 'Legacy flow', trigger: { kind: 'manual' }, actions: [] }
+    } as unknown as PreparedDataverseFlowChange;
+    const item = { ...conversationFixture().transcript[1]!, pendingFlowChanges: [legacy] };
+    const html = renderToStaticMarkup(
+      createElement(FlowChangeCards, { item, approvals: approvalActions() })
+    );
+    expect(html).toContain('Legacy flow');
+    expect(html).toContain('legacy flow preview cannot be applied');
+    expect(html).not.toContain('<button');
+  });
+
   it('shows all definition changes and complete documents for a general flow edit', () => {
     const item = {
       ...conversationFixture().transcript[1]!,

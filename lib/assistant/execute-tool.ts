@@ -18,8 +18,7 @@ import {
   queryFromArguments,
   mutationValueArray,
   marketingListMemberArray,
-  skillFromToolArguments,
-  flowSpecFromArguments
+  skillFromToolArguments
 } from './arguments';
 
 export async function executeAssistantTool(
@@ -168,37 +167,26 @@ export async function executeAssistantTool(
       if (args.operation !== 'create' && args.operation !== 'update') {
         throw new Error('A valid flow-change operation is required.');
       }
-      if (args.definition !== undefined) {
-        if (args.operation !== 'update' || args.spec !== undefined)
-          throw new Error('Definition edits require update and cannot include a typed spec.');
-        if (
-          !args.definition ||
-          typeof args.definition !== 'object' ||
-          Array.isArray(args.definition)
-        )
-          throw new Error('A complete definition is required.');
-        const definition = args.definition as Record<string, unknown>;
-        return executeFlowPrimitiveInActiveTab(context, {
-          action: 'prepare_flow_change',
-          origin: context.origin,
-          operation: 'update',
-          workflowId: stringValue(args.workflowId),
-          etag: stringValue(args.etag),
-          definition: {
-            name: stringValue(definition.name),
-            ...(definition.description !== undefined
-              ? { description: definition.description as string }
-              : {}),
-            clientData: stringValue(definition.clientData)
-          }
-        });
-      }
+      if (args.spec != null)
+        throw new Error(
+          'Typed flow specs are no longer supported. Pass a complete definition for create or update.'
+        );
+      if (!args.definition || typeof args.definition !== 'object' || Array.isArray(args.definition))
+        throw new Error('A complete flow definition is required.');
+      const definition = args.definition as Record<string, unknown>;
       return executeFlowPrimitiveInActiveTab(context, {
         action: 'prepare_flow_change',
         origin: context.origin,
         operation: args.operation,
         workflowId: optionalString(args.workflowId),
-        spec: flowSpecFromArguments(args.spec)
+        etag: optionalString(args.etag),
+        definition: {
+          name: stringValue(definition.name),
+          ...(definition.description != null
+            ? { description: definition.description as string }
+            : {}),
+          clientData: stringValue(definition.clientData)
+        }
       });
     } catch (error) {
       return {

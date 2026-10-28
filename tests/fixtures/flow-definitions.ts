@@ -1,4 +1,47 @@
-import type { PreparedDataverseFlowDefinitionChange } from '../../lib/flows/contracts';
+import type { PreparedDataverseFlowChange } from '../../lib/flows/contracts';
+
+export const contactEntity = { LogicalName: 'contact', EntitySetName: 'contacts' };
+export const contactAttributes = {
+  value: [
+    {
+      LogicalName: 'address1_country',
+      AttributeType: 'String',
+      IsValidForRead: true,
+      IsValidForCreate: true,
+      IsValidForUpdate: true
+    },
+    {
+      LogicalName: 'address1_city',
+      AttributeType: 'String',
+      IsValidForRead: true,
+      IsValidForCreate: true,
+      IsValidForUpdate: true
+    },
+    {
+      LogicalName: 'contactid',
+      AttributeType: 'Uniqueidentifier',
+      IsValidForRead: true,
+      IsValidForCreate: false,
+      IsValidForUpdate: false
+    }
+  ]
+};
+export const flowConnections = {
+  value: [
+    {
+      connectionreferencelogicalname: 'cr_dataverse',
+      connectionreferencedisplayname: 'Dataverse',
+      connectorid: '/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps',
+      ismanaged: false
+    }
+  ]
+};
+export function flowMetadataPayload(url: string): unknown | undefined {
+  if (url.includes('/connectionreferences')) return flowConnections;
+  if (url.includes('/Attributes')) return contactAttributes;
+  if (url.includes('/EntityDefinitions')) return { value: [contactEntity] };
+  return undefined;
+}
 
 export const flowOrigin = 'https://contoso.crm.dynamics.com';
 export const existingWorkflowId = '919da3e3-a5d2-f111-a05c-6045bd86f519';
@@ -91,7 +134,7 @@ export const existingFlow = {
   '@odata.etag': 'W/"existing-1"'
 };
 
-export const definitionProposal: PreparedDataverseFlowDefinitionChange = {
+export const definitionProposal: PreparedDataverseFlowChange = {
   mode: 'definition',
   id: 'definition-proposal',
   operation: 'update',

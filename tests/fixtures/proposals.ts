@@ -42,25 +42,29 @@ export const membershipProposal: PreparedMarketingListMembership = {
   }
 };
 
+const flowClientData = JSON.stringify({
+  schemaVersion: '1.0.0.0',
+  properties: {
+    connectionReferences: {},
+    definition: {
+      triggers: {
+        manual: {
+          type: 'Request',
+          kind: 'Button',
+          inputs: { schema: { type: 'object', properties: {} } }
+        }
+      },
+      actions: { Compose: { type: 'Compose', inputs: 'Hello', runAfter: {} } }
+    }
+  }
+});
 export const flowProposal: PreparedDataverseFlowChange = {
+  mode: 'definition',
   id: 'flow-proposal',
   operation: 'create',
   environmentOrigin: recordProposal.environmentOrigin,
-  after: {
-    name: 'Oddy test flow',
-    connectionReferenceLogicalName: 'cr_sharedcommondataserviceforapps',
-    trigger: { kind: 'manual' },
-    actions: [
-      {
-        id: 'List_accounts',
-        kind: 'list-rows',
-        table: 'account',
-        selectColumns: ['name'],
-        top: 1
-      }
-    ]
-  },
-  generatedClientData: '{"test":true}',
+  after: { name: 'Oddy test flow', clientData: flowClientData },
+  generatedClientData: flowClientData,
   warnings: ['The new flow will remain Off until it is activated separately.']
 };
 

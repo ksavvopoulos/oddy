@@ -55,7 +55,7 @@ export const SKILL_TOOL_OPTIONS: Array<{
   {
     name: 'prepare_dataverse_flow_change',
     label: 'Prepare cloud-flow change',
-    description: 'Prepare a typed flow create or general definition edit requiring approval.'
+    description: 'Prepare a complete flow definition for approved creation or editing.'
   },
   {
     name: 'prepare_dataverse_record_change',
@@ -133,117 +133,6 @@ const FILTER_SCHEMA = {
     }
   },
   required: ['column', 'operator']
-};
-
-const FLOW_FILTER_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    column: { type: 'string', description: 'Dataverse column logical or display name.' },
-    operator: {
-      type: 'string',
-      enum: ['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'contains', 'begins-with', 'ends-with']
-    },
-    value: { type: ['string', 'number', 'boolean', 'null'] }
-  },
-  required: ['column', 'operator', 'value']
-};
-
-const FLOW_VALUE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    kind: { type: 'string', enum: ['literal', 'trigger-column', 'action-output'] },
-    value: {
-      type: ['string', 'number', 'boolean', 'null'],
-      description: 'Required only for literal values.'
-    },
-    column: {
-      type: 'string',
-      description: 'Required for trigger-column and action-output values.'
-    },
-    actionId: {
-      type: 'string',
-      description: 'Earlier action ID, required only for action-output values.'
-    }
-  },
-  required: ['kind']
-};
-
-const FLOW_ACTION_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    id: {
-      type: 'string',
-      description: 'Stable action identifier using letters, digits, and underscores.'
-    },
-    kind: { type: 'string', enum: ['list-rows', 'get-row', 'add-row', 'update-row'] },
-    table: { type: 'string', description: 'Dataverse table logical or display name.' },
-    rowId: FLOW_VALUE_SCHEMA,
-    selectColumns: { type: 'array', maxItems: 20, items: { type: 'string' } },
-    filters: { type: 'array', maxItems: 20, items: FLOW_FILTER_SCHEMA },
-    orderBy: {
-      type: 'array',
-      maxItems: 5,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          column: { type: 'string' },
-          direction: { type: 'string', enum: ['asc', 'desc'] }
-        },
-        required: ['column', 'direction']
-      }
-    },
-    top: { type: 'integer', minimum: 1, maximum: 5000 },
-    values: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 30,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          column: { type: 'string' },
-          value: FLOW_VALUE_SCHEMA
-        },
-        required: ['column', 'value']
-      }
-    }
-  },
-  required: ['id', 'kind', 'table']
-};
-
-const FLOW_SPEC_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    name: { type: 'string' },
-    description: { type: 'string' },
-    connectionReferenceLogicalName: {
-      type: 'string',
-      description: 'Exact logical name returned by list_dataverse_flow_connections.'
-    },
-    trigger: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        kind: { type: 'string', enum: ['manual', 'dataverse-row'] },
-        table: { type: 'string' },
-        change: { type: 'string', enum: ['create', 'update', 'delete'] },
-        scope: {
-          type: 'string',
-          enum: ['user', 'business-unit', 'parent-child-business-units', 'organization']
-        },
-        selectColumns: { type: 'array', maxItems: 20, items: { type: 'string' } },
-        filters: { type: 'array', maxItems: 20, items: FLOW_FILTER_SCHEMA }
-      },
-      required: ['kind']
-    },
-    actions: { type: 'array', maxItems: 20, items: FLOW_ACTION_SCHEMA }
-  },
-  required: ['name', 'connectionReferenceLogicalName', 'trigger', 'actions']
 };
 
 const ORDER_SCHEMA = {
@@ -383,7 +272,7 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'get_dataverse_flow',
       description:
-        'Read one modern cloud flow by exact workflow ID, including its latest complete definition and ETag. Any unmanaged flow with a readable definition can be edited after approval, regardless of creator. Use definition and the exact ETag for general edits; preserve all unrelated content. typedEditable indicates whether the optional typed spec can be used instead. Managed flows are read-only.',
+        'Read one modern cloud flow by exact workflow ID, including its latest complete definition and ETag. Any unmanaged flow with a readable definition can be edited after approval, regardless of creator or legacy metadata. Revise the complete definition and preserve unrelated content. Managed flows are read-only.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -411,7 +300,7 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'list_dataverse_flow_connections',
       description:
-        'List existing Microsoft Dataverse connection references available for cloud-flow creation. Use the exact logical name in a flow specification; never invent a connection reference.',
+        'List existing connection references for all connectors available for cloud-flow creation or editing. Use exact logical names and matching connector IDs in the native definition; never invent a reference or credentials.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -424,34 +313,39 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'prepare_dataverse_flow_change',
       description:
-        'Prepare a cloud-flow change for explicit approval; never writes. For existing unmanaged flows, first get_dataverse_flow, then pass operation update, exact workflowId, etag from that read, and definition with name, description, and complete revised clientData JSON string. General definition edits support existing connectors, triggers, conditions, loops, nested actions, and expressions, regardless of creator. Preserve unrelated fields, designer metadata, and connection references; never invent credentials or connection references. Resolve Dataverse tables/columns using metadata (action entityName uses the entity-set name). Do not rely on a stale embedded spec. Do not pass spec with definition. Typed spec remains available for Dataverse-only creates and typedEditable updates. New flows are created Off. Updates save an unpublished draft only, never publish or activate. Managed flows remain read-only.',
+        'Prepare a complete native Power Automate definition for explicit approval; never writes. Use the same definition object (name, description, complete clientData JSON string) for both create and update. For create pass null workflowId and etag, resolve Dataverse metadata, list existing connection references, and supply a complete properties.definition and properties.connectionReferences document. For update first get_dataverse_flow, use its exact workflowId and etag, and preserve unrelated content, designer metadata, nested actions, expressions, and connection references. Conditions, loops, branches, and existing connectors are supported. Action entityName must use the metadata entity-set name (contacts), while webhook subscriptionRequest/entityname uses the logical name (contact). Static Dataverse tables/columns, connector references, and graph structure are validated. Expressions and full connector schemas still need Power Automate validation. Never invent references or credentials. There is no typed spec or ownership requirement. Creates remain Off; updates save an unpublished draft only, never publish or activate. Managed flows remain read-only.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
           operation: { type: 'string', enum: ['create', 'update'] },
-          workflowId: { type: 'string', description: 'Required for update.' },
+          workflowId: {
+            type: ['string', 'null'],
+            description: 'Exact workflow ID for update; null for create.'
+          },
           etag: {
-            type: 'string',
-            description: 'Exact ETag from get_dataverse_flow, required with definition.'
+            type: ['string', 'null'],
+            description: 'Exact ETag from get_dataverse_flow for update; null for create.'
           },
           definition: {
             type: 'object',
             additionalProperties: false,
             properties: {
               name: { type: 'string' },
-              description: { type: 'string' },
+              description: {
+                type: ['string', 'null'],
+                description: 'Text, empty text to clear, or null to preserve on update.'
+              },
               clientData: {
                 type: 'string',
                 description:
-                  'Complete revised clientdata JSON, including properties.definition, connectionReferences, and preserved metadata. Not a partial patch.'
+                  'Complete native clientdata JSON, not a patch. For create include schemaVersion 1.0.0.0 and properties with connectionReferences and a definition containing the Logic Apps $schema, contentVersion, parameters, triggers, actions, and outputs. Use valid connector host/operationId/parameters and authentication expressions. For update preserve unrelated fields and metadata from the exact read.'
               }
             },
-            required: ['name', 'clientData']
-          },
-          spec: FLOW_SPEC_SCHEMA
+            required: ['name', 'description', 'clientData']
+          }
         },
-        required: ['operation']
+        required: ['operation', 'workflowId', 'etag', 'definition']
       }
     }
   },

@@ -41,6 +41,24 @@ const messages = [{ role: 'user' as const, content: 'Help' }];
 const names = (tools: typeof DATAVERSE_TOOLS) => tools.map((tool) => tool.function.name);
 
 describe('assistant tool catalog', () => {
+  it('exposes one definition format with explicit nullable fields instead of competing specs', () => {
+    const schema = DATAVERSE_TOOLS.find(
+      (tool) => tool.function.name === 'prepare_dataverse_flow_change'
+    )!.function.parameters;
+    expect(schema).toMatchObject({
+      required: ['operation', 'workflowId', 'etag', 'definition'],
+      properties: {
+        workflowId: { type: ['string', 'null'] },
+        etag: { type: ['string', 'null'] },
+        definition: {
+          required: ['name', 'description', 'clientData'],
+          properties: { description: { type: ['string', 'null'] } }
+        }
+      }
+    });
+    expect(schema.properties).not.toHaveProperty('spec');
+  });
+
   it('keeps skill-builder choices and advertised tools synchronized and unique', () => {
     expect(names(DATAVERSE_TOOLS)).toEqual(SKILL_TOOL_OPTIONS.map((option) => option.name));
     expect(new Set(names(DATAVERSE_TOOLS)).size).toBe(DATAVERSE_TOOLS.length);

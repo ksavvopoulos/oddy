@@ -98,7 +98,7 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
     if (result.action === 'list_flow_connection_references') {
       return {
         name: toolName,
-        label: 'Listed Dataverse flow connections',
+        label: 'Listed flow connections',
         summary: `${result.connectionReferences?.length || 0} connection reference${result.connectionReferences?.length === 1 ? '' : 's'}`,
         details: result.connectionReferences
           ?.map((connection) => `${connection.displayName} (${connection.logicalName})`)
@@ -109,10 +109,7 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
       return {
         name: toolName,
         label: `Prepared cloud-flow ${result.flowChange?.operation || 'change'}`,
-        summary:
-          result.flowChange?.mode === 'definition'
-            ? 'Complete definition changes awaiting approval'
-            : `${result.flowChange?.after.actions.length || 0} action${result.flowChange?.after.actions.length === 1 ? '' : 's'} awaiting approval`,
+        summary: 'Complete definition changes awaiting approval',
         details: result.flowChange
           ? `${result.flowChange.after.name}; no flow definition was written.`
           : 'No flow definition was written.'

@@ -6,8 +6,7 @@ import { openDataverseFlowDesigner } from '../lib/browser/flow-navigation';
 import {
   queryFromArguments,
   mutationValueArray,
-  skillFromToolArguments,
-  flowSpecFromArguments
+  skillFromToolArguments
 } from '../lib/assistant/arguments';
 import { SKILL_TOOL_OPTIONS } from '../lib/assistant/tool-catalog';
 import { recordProposal } from './fixtures/proposals';
@@ -78,64 +77,46 @@ describe('assistant tool dispatch', () => {
     );
   });
 
-  it('routes typed flow preparation but never flow execution from model calls', async () => {
-    vi.mocked(executeFlowPrimitiveInActiveTab).mockResolvedValue({
-      ok: false,
-      action: 'prepare_flow_change',
-      error: 'test'
-    });
-    const spec = {
-      name: 'Oddy flow',
-      connectionReferenceLogicalName: 'cr_dataverse',
-      trigger: { kind: 'manual' },
-      actions: []
-    };
-    await executeAssistantTool(
-      context,
-      'prepare_dataverse_flow_change',
-      JSON.stringify({ operation: 'create', spec })
-    );
-    expect(executeFlowPrimitiveInActiveTab).toHaveBeenCalledWith(context, {
-      action: 'prepare_flow_change',
-      origin: context.origin,
-      operation: 'create',
-      spec
-    });
-    vi.mocked(executeFlowPrimitiveInActiveTab).mockClear();
-    expect((await executeAssistantTool(context, 'execute_flow_change', '{}')).ok).toBe(false);
-    expect(executeFlowPrimitiveInActiveTab).not.toHaveBeenCalled();
-  });
+  it.each(['create', 'update'])(
+    'routes the same definition format for %s and tolerates unused null fields',
+    async (operation) => {
+      vi.mocked(executeFlowPrimitiveInActiveTab).mockResolvedValue({
+        ok: false,
+        action: 'prepare_flow_change',
+        error: 'test'
+      });
+      const definition = { name: 'Flow', description: null, clientData: '{"properties":{}}' };
+      await executeAssistantTool(
+        context,
+        'prepare_dataverse_flow_change',
+        JSON.stringify({
+          operation,
+          workflowId: operation === 'update' ? 'flow-id' : null,
+          etag: operation === 'update' ? 'W/"1"' : null,
+          definition,
+          spec: null
+        })
+      );
+      expect(executeFlowPrimitiveInActiveTab).toHaveBeenCalledWith(context, {
+        action: 'prepare_flow_change',
+        origin: context.origin,
+        operation,
+        workflowId: operation === 'update' ? 'flow-id' : undefined,
+        etag: operation === 'update' ? 'W/"1"' : undefined,
+        definition: { name: 'Flow', clientData: definition.clientData }
+      });
+      vi.mocked(executeFlowPrimitiveInActiveTab).mockClear();
+      expect((await executeAssistantTool(context, 'execute_flow_change', '{}')).ok).toBe(false);
+      expect(executeFlowPrimitiveInActiveTab).not.toHaveBeenCalled();
+    }
+  );
 
-  it('routes complete definition proposals without exposing execution to the model', async () => {
-    vi.mocked(executeFlowPrimitiveInActiveTab).mockResolvedValue({
-      ok: false,
-      action: 'prepare_flow_change',
-      error: 'test'
-    });
-    const definition = { name: 'Existing flow', clientData: '{"properties":{}}' };
-    await executeAssistantTool(
-      context,
-      'prepare_dataverse_flow_change',
-      JSON.stringify({
-        operation: 'update',
-        workflowId: 'flow-id',
-        etag: 'W/"1"',
-        definition
-      })
-    );
-    expect(executeFlowPrimitiveInActiveTab).toHaveBeenCalledWith(context, {
-      action: 'prepare_flow_change',
-      origin: context.origin,
-      operation: 'update',
-      workflowId: 'flow-id',
-      etag: 'W/"1"',
-      definition
-    });
-    vi.mocked(executeFlowPrimitiveInActiveTab).mockClear();
+  it('rejects retired typed specs and missing definitions with an actionable error', async () => {
     for (const invalid of [
-      { operation: 'create', definition },
-      { operation: 'update', definition, spec: {} },
-      { operation: 'update', definition: [] }
+      { operation: 'create', spec: {} },
+      { operation: 'update', definition: {}, spec: {} },
+      { operation: 'update', definition: [] },
+      { operation: 'create', definition: null }
     ]) {
       expect(
         (
@@ -184,14 +165,6 @@ describe('assistant tool dispatch', () => {
       top: 50,
       filters: [{ column: 'emailaddress1', operator: 'eq', value: 'test@example.com' }]
     });
-    expect(
-      flowSpecFromArguments({
-        name: 'Oddy flow',
-        connectionReferenceLogicalName: 'cr_dataverse',
-        trigger: { kind: 'manual' },
-        actions: []
-      })
-    ).toMatchObject({ name: 'Oddy flow', trigger: { kind: 'manual' }, actions: [] });
     expect(
       mutationValueArray([
         { column: 'ownerid', lookup: { table: 'systemuser', recordId: 'guid' } },
