@@ -43,7 +43,7 @@ export function activeBulkEngine(context: DataverseContext) {
     throw new Error('Open the intended Dataverse environment first.');
   return createBulkEngine({
     origin: context.origin,
-    primitive: (request) => executePrimitiveInActiveTab(context, request),
+    primitive: (request, metadata) => executePrimitiveInActiveTab(context, request, metadata),
     transport: (request) => transportInActiveTab(context, request)
   });
 }

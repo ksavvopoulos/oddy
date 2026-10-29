@@ -5,10 +5,12 @@ import {
 } from '../dataverse-primitives';
 import { errorMessage } from '../messages';
 import type { DataverseContext } from '../types';
+import type { DataversePreparationMetadata } from '../dataverse/contracts';
 
 export async function executePrimitiveInActiveTab(
   context: DataverseContext,
-  request: DataversePrimitiveRequest
+  request: DataversePrimitiveRequest,
+  metadata?: DataversePreparationMetadata
 ): Promise<DataversePrimitiveResult> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url || !context.origin || new URL(tab.url).origin !== context.origin) {
@@ -20,7 +22,7 @@ export async function executePrimitiveInActiveTab(
       target: { tabId: tab.id, frameIds: [0] },
       world: 'MAIN',
       func: executeDataversePrimitive,
-      args: [request]
+      args: metadata ? [request, metadata] : [request]
     });
     return (
       (results[0]?.result as DataversePrimitiveResult | undefined) || {

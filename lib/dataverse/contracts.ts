@@ -55,7 +55,13 @@ export type DataversePrimitiveRequest =
       table: string;
       values: DataverseMutationValueInput[][];
     }
-  | { action: 'bulk_page'; origin: string; query: DataverseQuerySpec; cursor?: BulkPageCursor }
+  | {
+      action: 'bulk_page';
+      origin: string;
+      query: DataverseQuerySpec;
+      cursor?: BulkPageCursor;
+      requireConcurrency?: boolean;
+    }
   | {
       action: 'bulk_read_versions';
       origin: string;
@@ -153,7 +159,15 @@ export interface DataverseRelationship {
   referencingNavigationPropertyName?: string;
 }
 
+/** Private, in-memory metadata for one preparation only; never persisted or model-facing. */
+export interface DataversePreparationMetadata {
+  origin: string;
+  entities: Record<string, ResolvedDataverseEntity>;
+  responses: Record<string, unknown>;
+}
+
 export interface DataversePrimitiveResult {
+  preparationMetadata?: DataversePreparationMetadata;
   ok: boolean;
   action: DataversePrimitiveRequest['action'];
   entity?: ResolvedDataverseEntity;

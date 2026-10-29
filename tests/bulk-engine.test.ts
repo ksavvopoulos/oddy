@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
-import { bulkHarness, guid, updatePlan } from './fixtures/bulk';
+import { bulkHarness, bulkOrigin, guid, updatePlan } from './fixtures/bulk';
 import { bulkRepository } from '../lib/bulk/repository';
 import { createDataset } from '../lib/bulk/datasets';
 import type { BulkChunkResult, BulkExecutionOptions } from '../lib/bulk/contracts';
 import { createBulkEngine } from '../lib/bulk/engine';
+import type {
+  DataversePrimitiveRequest,
+  DataversePreparationMetadata
+} from '../lib/dataverse/contracts';
 
 beforeEach(() => {
   vi.stubGlobal('indexedDB', new IDBFactory());
@@ -28,7 +32,19 @@ describe('query-backed bulk engine', () => {
     expect(preview).not.toHaveProperty('rows');
     expect(preview).not.toHaveProperty('runToken');
     expect(h.transport).not.toHaveBeenCalled();
-    expect(h.primitive.mock.calls.filter(([r]) => r.action === 'bulk_page')).toHaveLength(5);
+    const pages = h.primitive.mock.calls.filter(([r]) => r.action === 'bulk_page');
+    expect(pages).toHaveLength(3);
+    for (const [request] of pages) {
+      expect(request).toMatchObject({
+        query: { columns: ['firstname'] },
+        requireConcurrency: true
+      });
+    }
+    expect(h.primitive.mock.calls.some(([r]) => r.action === 'bulk_read_versions')).toBe(false);
+    expect((await bulkRepository.rows(preview.id, 0, 1))[0]).toMatchObject({
+      etag: 'W/"1"',
+      fields: [{ logicalName: 'firstname', currentValue: 'Old', proposedValue: 'New' }]
+    });
     expect(await bulkRepository.rows(preview.id, 2350, 50)).toHaveLength(50);
   });
 
@@ -195,6 +211,87 @@ describe('query-backed bulk engine', () => {
     ).toBe(false);
   });
 
+  it('scopes metadata to one preparation and never carries it into execution or storage', async () => {
+    const h = bulkHarness(125);
+    const primitive = vi.fn(
+      async (request: DataversePrimitiveRequest, metadata?: DataversePreparationMetadata) => {
+        const result = await h.primitive(request);
+        return {
+          ...result,
+          preparationMetadata: metadata
+            ? structuredClone({
+                ...metadata,
+                responses: { ...metadata.responses, sentinel: 'private-metadata' }
+              })
+            : undefined
+        };
+      }
+    );
+    const engine = createBulkEngine({
+      origin: bulkOrigin,
+      primitive,
+      transport: h.transport,
+      now: () => Date.parse('2026-01-01T12:00:00Z')
+    });
+    const preview = await engine.prepare(updatePlan);
+    const preparation = primitive.mock.calls.find(([r]) => r.action === 'bulk_fields')![1]!;
+    expect(preparation.responses.sentinel).toBe('private-metadata');
+    expect(primitive.mock.calls.find(([r]) => r.action === 'bulk_page')![1]).toBe(preparation);
+    expect(JSON.stringify(await bulkRepository.getJob(preview.id))).not.toContain(
+      'private-metadata'
+    );
+    expect(JSON.stringify(preview)).not.toContain('preparationMetadata');
+    primitive.mockClear();
+    const approval = await engine.approve(preview.id, preview.revision);
+    await engine.runChunk(preview.id, approval.runToken, 0);
+    expect(primitive.mock.calls.every(([, metadata]) => metadata === undefined)).toBe(true);
+    primitive.mockClear();
+    await engine.remaining(preview.id);
+    const recovery = primitive.mock.calls.find(([r]) => r.action === 'bulk_fields')![1]!;
+    expect(recovery).not.toBe(preparation);
+    expect(primitive.mock.calls.find(([r]) => r.action === 'bulk_read_versions')![1]).toBe(
+      recovery
+    );
+    primitive.mockClear();
+    await engine.prepare(updatePlan);
+    expect(primitive.mock.calls.find(([r]) => r.action === 'bulk_fields')![1]).not.toBe(
+      preparation
+    );
+  });
+
+  it('reconciles frozen rows and versions in groups of 1000 without widening write chunks', async () => {
+    const h = bulkHarness(2400);
+    const preview = await h.engine.prepare(updatePlan);
+    const next = await h.engine.remaining(preview.id);
+    expect(next).toMatchObject({ total: 2400, status: 'pending' });
+    const reads = h.primitive.mock.calls.flatMap(([r]) =>
+      r.action === 'bulk_read_versions' ? [r.ids.length] : []
+    );
+    expect(reads).toEqual([1000, 1000, 400]);
+    expect(await bulkRepository.rows(next.id, 1000, 1000)).toHaveLength(1000);
+    expect(h.transport).not.toHaveBeenCalled();
+  });
+
+  it('validates create rows in groups of 100 rather than 50', async () => {
+    const h = bulkHarness(0);
+    const dataset = createDataset(
+      'contacts.json',
+      Array.from({ length: 205 }, (_, index) => ({ First: `New ${index}` })),
+      new Date('2026-01-01T12:00:00Z')
+    );
+    await bulkRepository.saveDataset(dataset);
+    const preview = await h.engine.prepare({
+      operation: 'create',
+      table: 'contact',
+      datasetId: dataset.summary.id,
+      mapping: { First: 'firstname' }
+    });
+    expect(preview.total).toBe(205);
+    expect(
+      h.primitive.mock.calls.flatMap(([r]) => (r.action === 'bulk_fields' ? [r.values.length] : []))
+    ).toEqual([100, 100, 5]);
+  });
+
   it('excludes unchanged rows before approval', async () => {
     const h = bulkHarness(5);
     h.records.get(guid(1))!.values.firstname = 'New';
@@ -247,7 +344,7 @@ describe('query-backed bulk engine', () => {
       h.primitive.mock.calls.filter(
         ([request]) => request.action === 'bulk_page' && request.query.table === 'incident'
       )
-    ).toHaveLength(6);
+    ).toHaveLength(3);
     expect(preview.total).toBe(1200);
     expect(h.transport).not.toHaveBeenCalled();
   });

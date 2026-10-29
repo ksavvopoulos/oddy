@@ -16,6 +16,7 @@ import type {
   DataverseOrderSpec,
   DataverseQuerySpec,
   DataversePrimitiveRequest,
+  DataversePreparationMetadata,
   ResolvedDataverseEntity,
   ResolvedDataverseColumn,
   DataverseRelationship,
@@ -40,7 +41,8 @@ export type {
  * inside its body. Only type imports are safe here. See docs/architecture.md.
  */
 export async function executeDataversePrimitive(
-  request: DataversePrimitiveRequest
+  request: DataversePrimitiveRequest,
+  preparationMetadata?: DataversePreparationMetadata
 ): Promise<DataversePrimitiveResult> {
   type EntityMetadata = {
     LogicalName?: string;
@@ -129,7 +131,22 @@ export async function executeDataversePrimitive(
     return String(value);
   };
 
+  // Only read-only preparation primitives may reuse metadata. Never cache records or identity.
+  const preparationCache =
+    preparationMetadata?.origin === request.origin &&
+    ['bulk_fields', 'bulk_page', 'bulk_read_versions', 'bulk_list_info', 'resolve_schema'].includes(
+      request.action
+    )
+      ? preparationMetadata
+      : undefined;
   const getJson = async <T>(url: string, preferFormatted = false): Promise<T> => {
+    const parsed = new URL(url);
+    const cacheable =
+      preparationCache &&
+      parsed.origin === request.origin &&
+      parsed.pathname.startsWith('/api/data/v9.2/EntityDefinitions');
+    if (cacheable && Object.hasOwn(preparationCache.responses, url))
+      return structuredClone(preparationCache.responses[url]) as T;
     const response = await fetch(url, {
       credentials: 'include',
       headers: preferFormatted
@@ -144,11 +161,15 @@ export async function executeDataversePrimitive(
       const detail = (await response.text()).slice(0, 500);
       throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail}` : ''}`);
     }
-    return (await response.json()) as T;
+    const value = (await response.json()) as T;
+    if (cacheable) preparationCache.responses[url] = structuredClone(value);
+    return value;
   };
 
-  // Per-injection caches amortize metadata over bulk rows without caching stale metadata across approvals.
-  const entityCache = new Map<string, ResolvedDataverseEntity>();
+  // A preparation can seed these caches; execution always starts with fresh metadata.
+  const entityCache = new Map<string, ResolvedDataverseEntity>(
+    Object.entries(preparationCache?.entities || {})
+  );
   const attributeCache = new Map<string, AttributeMetadata[]>();
   const choiceCache = new Map<string, Array<{ value: number; label: string }>>();
   const lookupCache = new Map<string, Map<string, string[]>>();
@@ -222,6 +243,10 @@ export async function executeDataversePrimitive(
     };
     entityCache.set(raw.toLowerCase(), resolved);
     entityCache.set(resolved.logicalName, resolved);
+    if (preparationCache) {
+      preparationCache.entities[raw.toLowerCase()] = resolved;
+      preparationCache.entities[resolved.logicalName] = resolved;
+    }
     return resolved;
   };
 
@@ -513,7 +538,7 @@ export async function executeDataversePrimitive(
   const buildFetchXml = (
     entity: ResolvedDataverseEntity,
     query: DataverseQuerySpec,
-    options: { top?: number; pageSize?: number; includeTotalCount?: boolean } = {}
+    options: { top?: number; pageSize?: number; includeTotalCount?: boolean; bulk?: boolean } = {}
   ): { fetchXml: string; selectedColumns: string[] } => {
     const selectedColumns = [
       entity.primaryIdAttribute,
@@ -524,14 +549,16 @@ export async function executeDataversePrimitive(
     ]
       .filter((column): column is string => Boolean(column))
       .filter((column, index, values) => values.indexOf(column) === index)
-      .slice(0, 20);
+      .slice(0, options.bulk ? undefined : 20);
     const top = options.top ?? query.top;
     const fetchAttributes: string[] = [];
     if (top !== undefined) {
       fetchAttributes.push(`top="${Math.min(Math.max(top, 1), 50)}"`);
     } else {
       if (options.pageSize !== undefined) {
-        fetchAttributes.push(`count="${Math.min(Math.max(options.pageSize, 1), 50)}"`);
+        fetchAttributes.push(
+          `count="${Math.min(Math.max(options.pageSize, 1), options.bulk ? 1000 : 50)}"`
+        );
         fetchAttributes.push('page="1"');
       }
       if (options.includeTotalCount) {
@@ -1450,12 +1477,25 @@ export async function executeDataversePrimitive(
             ).fields
           )
         );
-      return { ok: true, action: request.action, entity, bulkFields };
+      return {
+        ok: true,
+        action: request.action,
+        entity,
+        bulkFields,
+        preparationMetadata: preparationCache
+      };
     }
     if (request.action === 'bulk_page') {
       if (request.query.top !== undefined)
         throw new Error('Bulk selection cannot have a top limit.');
       const resolved = await resolveQuery(request.query);
+      if (
+        request.requireConcurrency === true &&
+        resolved.entity.optimisticConcurrencyEnabled !== true
+      )
+        throw new Error(
+          'This table does not advertise optimistic concurrency; safe bulk updates are unavailable.'
+        );
       if (resolved.unresolvedColumns.length)
         throw new Error(
           `Unresolved bulk columns: ${resolved.unresolvedColumns.join(', ')}. No filters were dropped.`
@@ -1481,9 +1521,9 @@ export async function executeDataversePrimitive(
           ...resolved.query,
           orderBy: [{ column: resolved.entity.primaryIdAttribute, direction: 'asc' }]
         },
-        { pageSize: 50 }
+        { pageSize: 1000, bulk: true }
       ).fetchXml;
-      xml = xml.replace('count="50"', 'count="500"').replace('page="1"', `page="${page}"`);
+      xml = xml.replace('page="1"', `page="${page}"`);
       if (request.cursor) {
         if (request.cursor.cookie.length > 100000 || /<!DOCTYPE/i.test(request.cursor.cookie))
           throw new Error('Invalid paging cookie.');
@@ -1518,7 +1558,10 @@ export async function executeDataversePrimitive(
           cookie = decodeURIComponent(cookie);
       }
       const more = payload['@Microsoft.Dynamics.CRM.morerecords'];
-      if ((more === true || (more === undefined && (payload.value?.length || 0) >= 500)) && !cookie)
+      if (
+        (more === true || (more === undefined && (payload.value?.length || 0) >= 1000)) &&
+        !cookie
+      )
         throw new Error(
           'Dataverse did not provide a safe paging cookie; selection was not truncated or approved.'
         );
@@ -1528,6 +1571,7 @@ export async function executeDataversePrimitive(
         action: request.action,
         entity: resolved.entity,
         query: resolved.query,
+        preparationMetadata: preparationCache,
         bulkPage: {
           records: (payload.value || []).map((record) =>
             bulkRecord(resolved.entity, record, resolved.query.columns || [])
@@ -1537,8 +1581,8 @@ export async function executeDataversePrimitive(
       };
     }
     if (request.action === 'bulk_read_versions') {
-      if (!request.ids.length || request.ids.length > 50 || request.columns.length > 20)
-        throw new Error('Read at most 50 record versions and 20 fields.');
+      if (!request.ids.length || request.ids.length > 1000 || request.columns.length > 20)
+        throw new Error('Read at most 1000 record versions and 20 fields.');
       const entity = await resolveEntity(request.table);
       if (request.requireConcurrency !== false && entity.optimisticConcurrencyEnabled !== true)
         throw new Error(
@@ -1569,14 +1613,51 @@ export async function executeDataversePrimitive(
       );
       url.searchParams.set(
         '$filter',
-        request.ids
-          .map((id) => `${entity.primaryIdAttribute} eq ${normalizeGuid(id, 'bulk record')}`)
-          .join(' or ')
+        `Microsoft.Dynamics.CRM.In(PropertyName='${entity.primaryIdAttribute}',PropertyValues=[${request.ids
+          .map((id) => `'${normalizeGuid(id, 'bulk record')}'`)
+          .join(',')}])`
       );
-      const payload = await getJson<{
+      type VersionPayload = {
         value?: Array<Record<string, unknown>>;
         '@odata.nextLink'?: string;
-      }>(url.toString(), true);
+      };
+      let payload: VersionPayload;
+      if (url.toString().length <= 30000) {
+        payload = await getJson<VersionPayload>(url.toString(), true);
+      } else {
+        // A 1000-ID URL exceeds Dataverse's 32 KiB GET limit. A read-only batch allows 64 KiB.
+        if (url.toString().length > 65536) throw new Error('Record-version query is too large.');
+        const boundary = `batch_${crypto.randomUUID().replace(/-/g, '')}`;
+        const response = await fetch(`${request.origin}/api/data/v9.2/$batch`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { ...headers, 'Content-Type': `multipart/mixed; boundary=${boundary}` },
+          body: `--${boundary}\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\nContent-ID: 1\r\n\r\nGET ${url.toString()} HTTP/1.1\r\nAccept: application/json\r\nPrefer: odata.include-annotations="Microsoft.Dynamics.CRM.lookuplogicalname"\r\n\r\n--${boundary}--\r\n`
+        });
+        if (!response.ok) throw new Error(`Record-version batch failed (${response.status}).`);
+        const responseBoundary = /boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i
+          .exec(response.headers.get('Content-Type') || '')
+          ?.slice(1)
+          .find(Boolean);
+        if (!responseBoundary) throw new Error('Missing record-version batch boundary.');
+        const parts = (await response.text())
+          .split(`--${responseBoundary}`)
+          .slice(1)
+          .filter((part) => !part.startsWith('--') && part.trim());
+        if (parts.length !== 1) throw new Error('Ambiguous record-version batch response.');
+        const content = parts[0]!
+          .split(/\r?\n\r?\n/)
+          .slice(1)
+          .join('\r\n\r\n');
+        if (!/^HTTP\/1\.[01] 200\b/.test(content))
+          throw new Error('Record-version query failed inside batch.');
+        const separator = /\r?\n\r?\n/.exec(content);
+        if (!separator) throw new Error('Missing record-version response body.');
+        payload = JSON.parse(
+          content.slice(separator.index + separator[0].length).trim()
+        ) as VersionPayload;
+      }
+      if (!Array.isArray(payload.value)) throw new Error('Missing record-version results.');
       if (payload['@odata.nextLink'])
         throw new Error(
           'Record-version response was unexpectedly paged; no incomplete preview is allowed.'
@@ -1585,6 +1666,7 @@ export async function executeDataversePrimitive(
         ok: true,
         action: request.action,
         entity,
+        preparationMetadata: preparationCache,
         bulkPage: {
           records: (payload.value || []).map((record) =>
             bulkRecord(
@@ -1632,7 +1714,13 @@ export async function executeDataversePrimitive(
         alreadyMembers: [],
         actionSignature: await resolveAddListMembersSignature()
       };
-      return { ok: true, action: request.action, entity, bulkList };
+      return {
+        ok: true,
+        action: request.action,
+        entity,
+        bulkList,
+        preparationMetadata: preparationCache
+      };
     }
     if (request.action === 'prepare_list_membership') {
       const listMembership = await prepareListMembership(request.listId, request.members);
@@ -1697,6 +1785,7 @@ export async function executeDataversePrimitive(
         ok: true,
         action: request.action,
         entity,
+        preparationMetadata: preparationCache,
         resolvedColumns,
         unresolvedColumns: requested.filter((column) => !resolvedNames.has(column))
       };

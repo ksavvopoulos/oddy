@@ -1,6 +1,7 @@
 import type {
   DataversePrimitiveRequest,
   DataversePrimitiveResult,
+  DataversePreparationMetadata,
   ResolvedDataverseEntity
 } from '../dataverse/contracts';
 import type { DataverseMutationValueInput, PreparedDataverseMutationField } from '../types';
@@ -22,14 +23,17 @@ const locks = new Set<string>();
 const preparationLocks = new Set<string>();
 export const bulkWorkIsActive = () => locks.size > 0 || preparationLocks.size > 0;
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const chunks = function* <T>(values: T[], size = 50) {
+const chunks = function* <T>(values: T[], size: number) {
   for (let i = 0; i < values.length; i += size) yield values.slice(i, i + size);
 };
 const maximumRows = 100000;
 
 export function createBulkEngine(options: {
   origin: string;
-  primitive: (request: DataversePrimitiveRequest) => Promise<DataversePrimitiveResult>;
+  primitive: (
+    request: DataversePrimitiveRequest,
+    metadata?: DataversePreparationMetadata
+  ) => Promise<DataversePrimitiveResult>;
   transport: (request: BulkTransportRequest) => Promise<BulkChunkResult>;
   repository?: BulkRepository;
   now?: () => number;
@@ -37,9 +41,21 @@ export function createBulkEngine(options: {
   const repo = options.repository || bulkRepository;
   const now = options.now || Date.now;
   const origin = options.origin;
-  const call = async (request: DataversePrimitiveRequest) => {
-    const result = await options.primitive(request);
+  const metadataContext = (): DataversePreparationMetadata => ({
+    origin,
+    entities: {},
+    responses: {}
+  });
+  const call = async (
+    request: DataversePrimitiveRequest,
+    metadata?: DataversePreparationMetadata
+  ) => {
+    const { preparationMetadata, ...result } = await options.primitive(request, metadata);
     if (!result.ok) throw new Error(result.error || 'The bulk preparation read failed.');
+    if (metadata && preparationMetadata?.origin === origin) {
+      metadata.entities = preparationMetadata.entities;
+      metadata.responses = preparationMetadata.responses;
+    }
     return result;
   };
   const identity = async () => {
@@ -121,7 +137,8 @@ export function createBulkEngine(options: {
   const validateFields = async (
     job: BulkJob,
     values: DataverseMutationValueInput[][],
-    operation: 'create' | 'update'
+    operation: 'create' | 'update',
+    metadata?: DataversePreparationMetadata
   ) => {
     const unique: DataverseMutationValueInput[][] = [];
     const indexes: number[] = [];
@@ -136,23 +153,32 @@ export function createBulkEngine(options: {
       }
       indexes.push(index);
     }
-    const result = await call({
-      action: 'bulk_fields',
-      origin,
-      table: job.summary.table,
-      operation,
-      values: unique
-    });
-    setEntity(job, result.entity);
-    if (!result.bulkFields || result.bulkFields.length !== unique.length)
-      throw new Error('Incomplete bulk field validation.');
-    return indexes.map((index) => structuredClone(result.bulkFields![index]!));
+    const fields: PreparedDataverseMutationField[][] = [];
+    for (const group of chunks(unique, 100)) {
+      const result = await call(
+        {
+          action: 'bulk_fields',
+          origin,
+          table: job.summary.table,
+          operation,
+          values: group
+        },
+        metadata
+      );
+      setEntity(job, result.entity);
+      if (!result.bulkFields || result.bulkFields.length !== group.length)
+        throw new Error('Incomplete bulk field validation.');
+      fields.push(...result.bulkFields);
+    }
+    return indexes.map((index) => structuredClone(fields[index]!));
   };
   const pages = async function* (
     selection: BulkSelection,
     columns: string[],
     maximum: number,
-    deadline: number
+    deadline: number,
+    metadata?: DataversePreparationMetadata,
+    requireConcurrency = false
   ) {
     let cursor: import('./contracts').BulkPageCursor | undefined;
     const seen = new Set<string>(),
@@ -162,12 +188,16 @@ export function createBulkEngine(options: {
         throw new Error(
           'Preparation exceeded its two-minute safety budget. Narrow the selection; no partial selection was approved.'
         );
-      const result = await call({
-        action: 'bulk_page',
-        origin,
-        query: { table: selection.table, filters: selection.filters, columns },
-        cursor
-      });
+      const result = await call(
+        {
+          action: 'bulk_page',
+          origin,
+          query: { table: selection.table, filters: selection.filters, columns },
+          cursor,
+          requireConcurrency
+        },
+        metadata
+      );
       if (!result.bulkPage || !result.entity) throw new Error('Missing bulk page metadata.');
       const records = result.bulkPage.records.filter((record) => {
         if (seen.has(record.id)) return false;
@@ -190,19 +220,23 @@ export function createBulkEngine(options: {
   const versions = async (
     job: BulkJob,
     rows: Array<{ recordId: string; fields: PreparedDataverseMutationField[] }>,
-    requireConcurrency = true
+    requireConcurrency = true,
+    metadata?: DataversePreparationMetadata
   ) => {
     const columns = [
       ...new Set(rows.flatMap((row) => row.fields.map((field) => field.logicalName)))
     ];
-    const result = await call({
-      action: 'bulk_read_versions',
-      origin,
-      table: job.summary.table,
-      ids: rows.map((row) => row.recordId),
-      columns,
-      requireConcurrency
-    });
+    const result = await call(
+      {
+        action: 'bulk_read_versions',
+        origin,
+        table: job.summary.table,
+        ids: rows.map((row) => row.recordId),
+        columns,
+        requireConcurrency
+      },
+      metadata
+    );
     if (!result.bulkPage) throw new Error('Record versions were not returned.');
     return new Map(result.bulkPage.records.map((record) => [record.id, record]));
   };
@@ -214,7 +248,11 @@ export function createBulkEngine(options: {
     job.summary.remaining = job.summary.total;
     await repo.save(job, rows);
   };
-  const membershipIds = async (job: BulkJob, deadline: number) => {
+  const membershipIds = async (
+    job: BulkJob,
+    deadline: number,
+    metadata?: DataversePreparationMetadata
+  ) => {
     if (!job.membership) throw new Error('Missing validated membership target.');
     const ids = new Set<string>();
     // Enumerate existing memberships once instead of issuing one existence query per contact.
@@ -226,7 +264,8 @@ export function createBulkEngine(options: {
       },
       ['entityid'],
       1000000,
-      deadline
+      deadline,
+      metadata
     )) {
       for (const record of page.records) {
         const value = record.values.entityid;
@@ -261,6 +300,7 @@ export function createBulkEngine(options: {
       job = fresh(plan, await identity());
       await repo.save(job);
       const deadline = now() + 120000;
+      const metadata = metadataContext();
       if (plan.operation === 'create') {
         const dataset = await repo.getDataset(plan.datasetId);
         if (!dataset || Date.parse(dataset.summary.expiresAt) <= now())
@@ -269,7 +309,7 @@ export function createBulkEngine(options: {
           if (!dataset.summary.columns.includes(source))
             throw new Error(`Dataset column ${source} does not exist.`);
         job.summary.matched = dataset.records.length;
-        for (const sourceRows of chunks(dataset.records)) {
+        for (const sourceRows of chunks(dataset.records, 100)) {
           if (now() > deadline)
             throw new Error(
               'Create preparation exceeded its two-minute safety budget; no partial dataset was approved.'
@@ -282,7 +322,8 @@ export function createBulkEngine(options: {
                 value: record[source]
               }))
             ),
-            'create'
+            'create',
+            metadata
           );
           await append(
             job,
@@ -295,25 +336,56 @@ export function createBulkEngine(options: {
           );
         }
       } else {
+        // Capture update values and ETags in the selection itself, not a second version scan.
+        let constant: PreparedDataverseMutationField[] = [];
+        if (plan.operation !== 'membership') {
+          constant = (
+            await validateFields(
+              job,
+              [
+                plan.operation === 'count_related'
+                  ? [{ column: plan.targetColumn, value: 0 }]
+                  : plan.values
+              ],
+              'update',
+              metadata
+            )
+          )[0]!;
+          if (
+            plan.operation === 'count_related' &&
+            !['Integer', 'BigInt'].includes(constant[0]?.attributeType || '')
+          )
+            throw new Error('Related-record counts require a writable whole-number field.');
+        }
         const selected: BulkReadRecord[] = [];
-        for await (const page of pages(plan.selection, [], maximumRows, deadline)) {
+        for await (const page of pages(
+          plan.selection,
+          constant.map((field) => field.logicalName),
+          maximumRows,
+          deadline,
+          metadata,
+          plan.operation !== 'membership'
+        )) {
           setEntity(job, page.entity);
           selected.push(...page.records);
         }
         job.summary.matched = selected.length;
         if (plan.operation === 'membership') {
-          const result = await call({
-            action: 'bulk_list_info',
-            origin,
-            table: job.summary.table,
-            listId: plan.listId
-          });
+          const result = await call(
+            {
+              action: 'bulk_list_info',
+              origin,
+              table: job.summary.table,
+              listId: plan.listId
+            },
+            metadata
+          );
           if (!result.bulkList)
             throw new Error('The static marketing list could not be validated.');
           job.membership = result.bulkList;
           job.summary.description += `\nTarget static list: ${job.membership.listName} (${job.membership.listId}).`;
-          const existing = await membershipIds(job, deadline);
-          for (const group of chunks(selected)) {
+          const existing = await membershipIds(job, deadline, metadata);
+          for (const group of chunks(selected, 1000)) {
             const pending = group.filter((record) => !existing.has(record.id));
             job.summary.unchanged += group.length - pending.length;
             await append(
@@ -328,20 +400,17 @@ export function createBulkEngine(options: {
             );
           }
         } else {
-          let constant: PreparedDataverseMutationField[];
           const counts = new Map<string, number>();
           if (plan.operation === 'count_related') {
-            constant = (
-              await validateFields(job, [[{ column: plan.targetColumn, value: 0 }]], 'update')
-            )[0]!;
-            if (!['Integer', 'BigInt'].includes(constant[0]?.attributeType || ''))
-              throw new Error('Related-record counts require a writable whole-number field.');
-            const source = await call({
-              action: 'resolve_schema',
-              origin,
-              table: plan.related.table,
-              columns: [plan.related.lookupColumn]
-            });
+            const source = await call(
+              {
+                action: 'resolve_schema',
+                origin,
+                table: plan.related.table,
+                columns: [plan.related.lookupColumn]
+              },
+              metadata
+            );
             const lookup = source.resolvedColumns?.[0];
             if (
               !lookup?.targets?.includes(job.summary.table) ||
@@ -352,7 +421,13 @@ export function createBulkEngine(options: {
               );
             job.summary.description += `\nResolved source lookup: ${source.entity?.logicalName || plan.related.table}.${lookup.logicalName} → ${job.summary.table}.${job.primaryIdAttribute}. Missing counts become zero.`;
             const targets = new Set(selected.map((record) => record.id));
-            for await (const page of pages(plan.related, [lookup.logicalName], 1000000, deadline))
+            for await (const page of pages(
+              plan.related,
+              [lookup.logicalName],
+              1000000,
+              deadline,
+              metadata
+            ))
               for (const record of page.records) {
                 const parent = record.values[lookup.logicalName];
                 if (parent === null) continue;
@@ -367,8 +442,8 @@ export function createBulkEngine(options: {
                 const id = parent.toLowerCase();
                 if (targets.has(id)) counts.set(id, (counts.get(id) || 0) + 1);
               }
-          } else constant = (await validateFields(job, [plan.values], 'update'))[0]!;
-          for (const group of chunks(selected)) {
+          }
+          for (const group of chunks(selected, 1000)) {
             if (now() > deadline)
               throw new Error(
                 'Update preparation exceeded its two-minute safety budget; no partial selection was approved.'
@@ -382,7 +457,7 @@ export function createBulkEngine(options: {
                   : {})
               }))
             }));
-            const current = await versions(job, proposed);
+            const current = new Map(group.map((record) => [record.id, record]));
             const rows: BulkRow[] = [];
             for (const item of proposed) {
               const record = current.get(item.recordId);
@@ -677,16 +752,19 @@ export function createBulkEngine(options: {
       await repo.save(job);
       try {
         const deadline = now() + 120000;
+        const metadata = metadataContext();
         const existing =
-          job.plan.operation === 'membership' ? await membershipIds(job, deadline) : undefined;
-        for (let offset = 0; offset < previous.summary.total; offset += 50) {
+          job.plan.operation === 'membership'
+            ? await membershipIds(job, deadline, metadata)
+            : undefined;
+        for (let offset = 0; offset < previous.summary.total; offset += 1000) {
           if (now() > deadline)
             throw new Error(
               'Remaining-work reconciliation exceeded its safety budget. No partial preview was approved.'
             );
-          const old = await repo.rows(id, offset, 50);
+          const old = await repo.rows(id, offset, 1000);
           if (
-            old.length !== Math.min(50, previous.summary.total - offset) ||
+            old.length !== Math.min(1000, previous.summary.total - offset) ||
             old.some((row, index) => row.index !== offset + index)
           )
             throw new Error(
@@ -706,10 +784,16 @@ export function createBulkEngine(options: {
             const fields = await validateFields(
               job,
               candidates.map((row) => fieldInputs(row.fields)),
-              job.plan.operation === 'create' ? 'create' : 'update'
+              job.plan.operation === 'create' ? 'create' : 'update',
+              metadata
             );
             const proposed = candidates.map((row, index) => ({ ...row, fields: fields[index]! }));
-            const current = await versions(job, proposed, job.plan.operation !== 'create');
+            const current = await versions(
+              job,
+              proposed,
+              job.plan.operation !== 'create',
+              metadata
+            );
             const rows: BulkRow[] = [];
             for (const row of proposed) {
               const record = current.get(row.recordId);

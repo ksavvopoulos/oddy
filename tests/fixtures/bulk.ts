@@ -57,7 +57,7 @@ export function bulkHarness(size = 1200, repository: BulkRepository = bulkReposi
           )
         };
       if (request.action === 'bulk_page') {
-        const source =
+        const source: BulkReadRecord[] =
           request.query.table === 'incident'
             ? cases
             : request.query.table === 'listmember'
@@ -67,8 +67,8 @@ export function bulkHarness(size = 1200, repository: BulkRepository = bulkReposi
                   lookupTypes: {}
                 }))
               : [...records.values()];
-        const start = ((request.cursor?.page || 1) - 1) * 500;
-        const more = start + 500 < source.length;
+        const start = ((request.cursor?.page || 1) - 1) * 1000;
+        const more = start + 1000 < source.length;
         return {
           ...base,
           entity:
@@ -80,9 +80,14 @@ export function bulkHarness(size = 1200, repository: BulkRepository = bulkReposi
                   primaryIdAttribute: `${request.query.table}id`
                 },
           bulkPage: {
-            records: structuredClone(source.slice(start, start + 500)),
+            records: structuredClone(source.slice(start, start + 1000)).map((record) => ({
+              ...record,
+              values: Object.fromEntries(
+                (request.query.columns || []).map((column) => [column, record.values[column]])
+              )
+            })),
             cursor: more
-              ? { page: (request.cursor?.page || 1) + 1, cookie: `cookie-${start + 500}` }
+              ? { page: (request.cursor?.page || 1) + 1, cookie: `cookie-${start + 1000}` }
               : undefined
           }
         };

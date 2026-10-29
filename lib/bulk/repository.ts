@@ -76,7 +76,7 @@ export const bulkRepository = {
         offset < 0 ||
         !Number.isInteger(limit) ||
         limit < 1 ||
-        limit > 100
+        limit > 1000
       )
         throw new Error('Invalid bulk workspace page.');
       const values = (await request(
