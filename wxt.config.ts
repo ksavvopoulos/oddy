@@ -3,6 +3,9 @@ import packageJson from './package.json';
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  zip: {
+    artifactTemplate: 'oddy-{{packageVersion}}-{{browser}}.zip'
+  },
   manifest: {
     name: 'Oddy',
     description: 'Your AI-powered Dataverse Raven for data, cloud flows, and changes you approve.',

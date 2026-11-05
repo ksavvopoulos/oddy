@@ -74,6 +74,31 @@ Load it from `chrome://extensions`:
 4. Open a Dataverse model-driven app and click the extension action.
 5. Open extension settings and configure Azure OpenAI.
 
+## Releases
+
+GitHub Actions checks every pull request to `main` and every push to `main`. Pushing an **annotated** stable version tag such as `v0.13.2` runs the release workflow. It checks the tag against the exact commit, `package.json`, both lockfile root versions, the built manifest, and the manifest inside the ZIP. Only commits already on `main` can be released.
+
+After all checks pass, the workflow publishes a GitHub release with generated notes, `oddy-X.Y.Z-chrome.zip`, and `SHA256SUMS`. It uses the built-in `GITHUB_TOKEN`; no personal access token or store credentials are needed. It does **not** publish to the Chrome Web Store.
+
+To ship a new version:
+
+```bash
+# Start on main with the intended changes committed.
+npm version 0.13.3 --no-git-tag-version
+npm run check
+git add package.json package-lock.json
+git commit -m "Bump version to 0.13.3"
+git tag -a v0.13.3 -m "Oddy 0.13.3"
+git push origin main
+git push origin v0.13.3
+```
+
+For the first `v0.13.2` release, do not bump again: commit and push the automation first, then tag that commit. A tag on an older commit without the workflow will not run this automation. Use `npm run release:verify -- --tag v0.13.2 --manifest .output/chrome-mv3/manifest.json` for a local version check; add `--require-tag` to check the actual annotated tag and clean working tree too.
+
+Never move a published tag or replace its assets. Existing releases cause publication to fail instead of being overwritten. If uploading fails, an unpublished draft may remain; inspect it before manual recovery. Do not delete or replace a published release to retry. Enable **release immutability** in GitHub repository settings and a tag ruleset blocking updates/deletions of `v*` for server-enforced protection; workflow permissions cannot enforce that repository policy themselves.
+
+To install a release, download and extract the Chrome ZIP, then choose the extracted folder with **Load unpacked** at `chrome://extensions`. To verify its checksum, download `SHA256SUMS` beside the ZIP and run `sha256sum --check SHA256SUMS` (or compare with PowerShell `Get-FileHash -Algorithm SHA256`).
+
 ## Azure OpenAI settings
 
 Enter:

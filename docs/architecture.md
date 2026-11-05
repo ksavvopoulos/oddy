@@ -160,6 +160,18 @@ The initial browser runner caps target/dataset rows at 100,000, source/membershi
 
 Native `CreateMultiple`/`UpdateMultiple` optimization and a separately authenticated server runner are future adapters. The initial CRUD transport uses `$batch`; do not describe it as native bulk-message execution or bypass row-version checks for speed. No codemode or model-generated script execution is introduced.
 
+## CI and release automation
+
+`.github/workflows/ci.yml` runs read-only checks on `main` pushes and pull requests. `.github/workflows/release.yml` runs only on `v*` tag pushes; its validator accepts stable Chrome-compatible `vX.Y.Z` tags only. Both use Node 22, `npm ci`, the full `npm run check`, and icon verification. Actions are pinned to upstream commit SHAs; `.github/dependabot.yml` proposes monthly action updates. `.gitattributes` aligns text checkouts with Prettier's LF output on Windows and Linux.
+
+`scripts/verify-release.mjs` uses Node built-ins only, so release metadata can be checked before installing dependencies. It validates package/lockfile versions, optional manifests (including `version_name`), and an optional tag. `--require-tag` also requires an annotated local tag on HEAD, an optional exact event commit, and a clean working tree. Tests cover drift in either lockfile root, ZIP-vs-unpacked version drift, invalid Chrome versions, lightweight/stale tags, dirty inputs, and the CLI. Ordinary `npm run check` now verifies the generated manifest too.
+
+The release build job checks out the exact event commit with full tag history, requires that commit to be an ancestor of `origin/main`, and has only `contents: read` with no persisted checkout credentials. WXT builds a Chrome ZIP named `oddy-{{packageVersion}}-{{browser}}.zip`; the workflow tests its ZIP structure, extracts its root manifest, verifies versions again, and writes SHA-256 checksums. Only these release assets cross into the publishing job through the exact uploaded artifact ID.
+
+The separate publication job has `contents: write` but checks out no code and installs no project dependencies. Downloaded artifact digest mismatches fail, checksums and the archived version are rechecked, and the current remote annotated tag must still point to the event commit. GitHub CLI uses `--verify-tag` (never implicit tag creation), creates a new draft with assets and generated release notes, then publishes it. Creation failure stops before publication; existing releases/assets are not clobbered. An interrupted upload can leave a draft for explicit operator review, not automatic replacement. Same-tag runs are serialized without cancellation. Nothing uploads to extension stores or runs on pull requests with a write token.
+
+Immutability is a repository policy, not something this workflow can guarantee against administrators: enable GitHub immutable releases and a tag ruleset preventing updates/deletions of `v*`. Do not silently move a tag to repair a failed version. The workflow must be committed in the tagged commit before the first release tag is pushed.
+
 ## Adding a Dataverse capability
 
 1. Add proposal/result contracts to `lib/types.ts` if the operation needs approval. Add the primitive request/result shape in `lib/dataverse/contracts.ts`.

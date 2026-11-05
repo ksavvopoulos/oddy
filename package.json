@@ -13,9 +13,10 @@
     "test:watch": "vitest",
     "icons": "node scripts/generate-icons.mjs",
     "icons:check": "node scripts/generate-icons.mjs --check",
+    "release:verify": "node scripts/verify-release.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run format:check && npm run typecheck && npm test && npm run build"
+    "check": "npm run format:check && npm run typecheck && npm test && npm run build && npm run release:verify -- --manifest .output/chrome-mv3/manifest.json"
   },
   "dependencies": {
     "@wxt-dev/module-react": "^1.2.2",
