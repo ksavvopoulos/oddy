@@ -172,6 +172,14 @@ The separate publication job has `contents: write` but checks out no code and in
 
 Immutability is a repository policy, not something this workflow can guarantee against administrators: enable GitHub immutable releases and a tag ruleset preventing updates/deletions of `v*`. Do not silently move a tag to repair a failed version. The workflow must be committed in the tagged commit before the first release tag is pushed.
 
+## Privacy policy site
+
+`docs/privacy.md` is the canonical policy and `docs/site-index.md` is the public homepage. `scripts/build-site.mjs` renders only these Markdown documents using the project's existing React/React Markdown dependencies, writes self-contained HTML with inline CSS and no client JavaScript, and outputs `.output/site/index.html`, `.output/site/privacy/index.html`, and `.nojekyll`. Relative links work under the GitHub project path `/oddy/`. No tracking scripts, fonts, store screenshots, or other docs are copied into the site. The policy separately discloses GitHub hosting and voluntary public support requests.
+
+`.github/workflows/pages.yml` builds on matching `main` changes or manual dispatch, then deploys the Pages artifact in a separate job with only `pages: write` and `id-token: write`. Build steps have read-only repository access; checkout credentials are not persisted. Actions are SHA-pinned and covered by the existing Dependabot configuration. Repository **Settings → Pages → Source: GitHub Actions** must first be enabled by a maintainer; no personal access token is added to the workflow to enable Pages. The expected policy URL is `https://ksavvopoulos.github.io/oddy/privacy/`, available only after a successful deployment. CI also builds the site, and `privacy-site.test.ts` checks its output, navigation, policy disclosures, and workflow permissions.
+
+Policy wording must track the actual code: local processing is still data handling, Azure requests use the configured endpoint, local API keys/history/bulk data are not independently encrypted, history is opt-in, bulk workspace persists independently of chat history, cleanup is operation-triggered, and active-record field exclusions do not constrain separate native record queries. Do not replace these facts with claims of zero data handling, guaranteed immediate deletion, or publisher-controlled Microsoft retention. Policy-only updates do not change the extension version or publish a Chrome release.
+
 ## Adding a Dataverse capability
 
 1. Add proposal/result contracts to `lib/types.ts` if the operation needs approval. Add the primitive request/result shape in `lib/dataverse/contracts.ts`.

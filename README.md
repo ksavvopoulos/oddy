@@ -193,6 +193,18 @@ Keep the side panel open and the signed-in Dataverse tab active while execution 
 - Upload cells must be scalar JSON values or CSV text. Creates currently support explicit scalar/Choice mappings; per-row lookup mappings and executable expressions are not supported. Empty CSV cells stay empty strings; use JSON `null` explicitly. Bulk DateTime inputs require ISO timestamps with UTC or an explicit offset.
 - Native `CreateMultiple`/`UpdateMultiple` optimization and a server-hosted runner are future adapters, not capabilities assumed for every table. Conditional `$batch` updates deliberately preserve row-version protection.
 
+## Privacy policy website
+
+The policy source is [docs/privacy.md](docs/privacy.md). A small static site is built with `npm run site:build` into `.output/site`; only the homepage and privacy policy are published, not other repository files or store screenshots.
+
+To publish it:
+
+1. In GitHub repository **Settings → Pages → Build and deployment**, set **Source** to **GitHub Actions**. This one-time repository setting must be enabled by a maintainer; the workflow does not enable it with a personal access token.
+2. Commit and push the policy/site/workflow changes to `main`. The **Privacy site** workflow deploys automatically when its inputs change. If Pages was enabled after the push, use **Actions → Privacy site → Run workflow** on `main`.
+3. Verify the public page opens without signing in, then enter `https://ksavvopoulos.github.io/oddy/privacy/` in the Chrome Web Store privacy-policy URL field. The URL is not live until a successful Pages deployment.
+
+Policy-only changes do not require a new extension release tag. Review the policy whenever data handling changes; its statements and the Chrome Web Store disclosures must agree with the shipped extension.
+
 ## Security and privacy
 
 An API key stored in a browser extension cannot be considered fully secret. This direct-call mode is intended for personal development and controlled internal evaluation.
@@ -282,3 +294,9 @@ Development commands:
 3. Extend native query integration into bulk selection only after reviewing frozen-scope approval and reconciliation guarantees.
 4. Replace direct API-key calls with an Entra-authenticated backend.
 5. Add environment-specific policies and administrator-managed settings.
+
+## License
+
+Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Kostas Savvopoulos.
+
+Third-party dependencies retain their respective licenses.
