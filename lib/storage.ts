@@ -11,10 +11,10 @@ const DEFAULT_SYSTEM_PROMPT =
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   azureOpenAI: {
     endpoint: '',
-    deployment: '',
+    deployment: 'gpt-6.1-sol',
     apiVersion: '2024-10-21',
     apiKey: '',
-    temperature: 0.2,
+    temperature: 1.0,
     systemPrompt: DEFAULT_SYSTEM_PROMPT
   },
   privacy: {

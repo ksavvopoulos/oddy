@@ -101,6 +101,8 @@ To install a release, download and extract the Chrome ZIP, then choose the extra
 
 ## Azure OpenAI settings
 
+New settings default to deployment `gpt-6.1-sol` and temperature `1.0`. Existing saved values are preserved. The deployment name must match a deployment in your Azure resource.
+
 Enter:
 
 - Base endpoint, such as `https://your-resource.openai.azure.com`

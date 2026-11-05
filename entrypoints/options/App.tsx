@@ -262,7 +262,7 @@ export function App() {
           <label className="field">
             <span>Deployment name</span>
             <input
-              placeholder="gpt-4o"
+              placeholder={DEFAULT_SETTINGS.azureOpenAI.deployment}
               value={settings.azureOpenAI.deployment}
               onChange={(event) => updateAzure('deployment', event.target.value)}
             />
