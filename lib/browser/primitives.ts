@@ -13,7 +13,14 @@ export async function executePrimitiveInActiveTab(
   metadata?: DataversePreparationMetadata
 ): Promise<DataversePrimitiveResult> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url || !context.origin || new URL(tab.url).origin !== context.origin) {
+  if (
+    !tab?.id ||
+    !tab.url ||
+    !context.origin ||
+    request.origin !== context.origin ||
+    tab.pendingUrl ||
+    new URL(tab.url).origin !== context.origin
+  ) {
     return { ok: false, action: request.action, error: 'The active browser tab changed.' };
   }
 

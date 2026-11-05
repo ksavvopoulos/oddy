@@ -35,6 +35,77 @@ describe('assistant tool dispatch', () => {
     }
   );
 
+  it('forwards full native XML and continuation arguments without structured normalization', async () => {
+    const fetchXml =
+      '<fetch><entity name="product"><filter type="or"><condition attribute="name" operator="eq" value="A &amp; B"/></filter></entity></fetch>';
+    await executeAssistantTool(
+      context,
+      'query_dataverse_records',
+      JSON.stringify({ fetchXml, pageSize: 100, cursor: null })
+    );
+    expect(executePrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'query_records',
+      origin: context.origin,
+      fetchXml,
+      pageSize: 100,
+      cursor: undefined
+    });
+    await executeAssistantTool(
+      context,
+      'query_dataverse_records',
+      JSON.stringify({ fetchXml: null, pageSize: null, cursor: 'cursor' })
+    );
+    expect(executePrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'query_records',
+      origin: context.origin,
+      fetchXml: undefined,
+      pageSize: undefined,
+      cursor: 'cursor'
+    });
+    const layoutXml = '<grid><row id="productid"/></grid>';
+    await executeAssistantTool(
+      context,
+      'manage_dataverse_view',
+      JSON.stringify({ action: 'upsert', table: 'product', fetchXml, layoutXml, etag: 'W/"12"' })
+    );
+    expect(executePrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'upsert_view',
+      origin: context.origin,
+      table: 'product',
+      fetchXml,
+      layoutXml,
+      etag: 'W/"12"'
+    });
+    await executeAssistantTool(
+      context,
+      'execute_dataverse_view',
+      JSON.stringify({ table: null, pageSize: null, cursor: 'view-cursor' })
+    );
+    expect(executePrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'execute_view',
+      origin: context.origin,
+      table: undefined,
+      pageSize: undefined,
+      cursor: 'view-cursor'
+    });
+  });
+
+  it.each([
+    ['query_dataverse_records', { table: 'product', filters: [] }],
+    ['query_dataverse_records', { fetchXml: '<fetch/>', cursor: 123 }],
+    ['query_dataverse_records', { fetchXml: '<fetch/>', pageSize: '100' }],
+    ['manage_dataverse_view', { action: 'delete', table: 'product' }],
+    ['manage_dataverse_view', { action: 'get', table: 'product', fetchXml: '<fetch/>' }],
+    ['execute_dataverse_view', { table: 'product', top: 10 }]
+  ])(
+    'rejects unsupported native arguments without silently dropping them (%s)',
+    async (tool, args) => {
+      const result = await executeAssistantTool(context, tool, JSON.stringify(args));
+      expect(result.ok).toBe(false);
+      expect(executePrimitiveInActiveTab).not.toHaveBeenCalled();
+    }
+  );
+
   it('routes mutation preparation but never execution from model calls', async () => {
     vi.mocked(executePrimitiveInActiveTab).mockResolvedValue({
       ok: true,

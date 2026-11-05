@@ -46,6 +46,12 @@ export interface DataverseQuerySpec {
   top?: number;
 }
 
+export interface DataverseNativeReadOptions {
+  fetchXml?: string;
+  pageSize?: number;
+  cursor?: string;
+}
+
 export type DataversePrimitiveRequest =
   | { action: 'bulk_identity'; origin: string }
   | {
@@ -82,6 +88,7 @@ export type DataversePrimitiveRequest =
       origin: string;
       query: DataverseQuerySpec;
     }
+  | ({ action: 'query_records'; origin: string } & DataverseNativeReadOptions)
   | {
       action: 'discover_relationships';
       origin: string;
@@ -100,10 +107,19 @@ export type DataversePrimitiveRequest =
       layoutColumns?: string[];
     }
   | {
-      action: 'execute_view';
+      action: 'upsert_view';
       origin: string;
       table: string;
-      top?: number;
+      fetchXml: string;
+      layoutXml: string;
+      etag?: string;
+    }
+  | {
+      action: 'execute_view';
+      origin: string;
+      table?: string;
+      pageSize?: number;
+      cursor?: string;
     }
   | {
       action: 'prepare_mutation';
@@ -182,6 +198,15 @@ export interface DataversePrimitiveResult {
   bulkPage?: BulkPage;
   bulkList?: PreparedMarketingListMembership;
   totalCount?: number;
+  recordPage?: {
+    page: number;
+    pageSize: number;
+    returned: number;
+    hasMore: boolean;
+    nextCursor?: string;
+    completeness: 'more-pages' | 'complete' | 'top-limited' | 'incomplete';
+    pagingMode: 'cookie' | 'simple' | 'none';
+  };
   relationships?: DataverseRelationship[];
   view?: {
     id: string;
@@ -190,6 +215,7 @@ export interface DataversePrimitiveResult {
     created?: boolean;
     query?: DataverseQuerySpec;
     layoutColumns?: string[];
+    etag?: string;
   };
   mutation?: PreparedDataverseMutation;
   mutationResult?: DataverseMutationExecutionResult;

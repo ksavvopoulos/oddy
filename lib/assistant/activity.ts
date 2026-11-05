@@ -143,8 +143,12 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
       return {
         name: toolName,
         label: `Queried ${result.entity?.logicalName || 'Dataverse'}`,
-        summary: `${result.totalCount || 0} matching record${result.totalCount === 1 ? '' : 's'}`,
-        details: `Structured read-only query: ${JSON.stringify(result.query)}.`
+        summary: result.recordPage
+          ? `${result.recordPage.returned} rows returned · ${result.recordPage.completeness}`
+          : `${result.totalCount || 0} matching record${result.totalCount === 1 ? '' : 's'}`,
+        details: result.fetchXml
+          ? `Native read-only FetchXML. ${result.warnings?.join(' ') || ''}`.trim()
+          : `Structured read-only query: ${JSON.stringify(result.query)}.`
       };
     }
     if (result.action === 'discover_relationships') {
@@ -166,7 +170,7 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
         name: toolName,
         label: `Read ${result.view?.name || 'personal view'}`,
         summary: 'View definition loaded',
-        details: `View ${result.view?.id}; query: ${JSON.stringify(result.view?.query)}.`
+        details: `View ${result.view?.id}; complete native FetchXML and layout XML returned.`
       };
     }
     if (result.action === 'prepare_mutation') {
@@ -210,15 +214,16 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
         name: toolName,
         label: `${result.view?.created ? 'Created' : 'Updated'} ${result.view?.name || 'personal view'}`,
         summary: 'View definition saved',
-        details: `View ${result.view?.id}; query: ${JSON.stringify(result.view?.query)}.`
+        details: `View ${result.view?.id}; complete native definitions saved.`
       };
     }
     const dataverseResult = result as DataversePrimitiveResult;
     return {
       name: toolName,
       label: `Executed ${dataverseResult.view?.name || 'personal view'}`,
-      summary: `${dataverseResult.records?.length || 0} record${dataverseResult.records?.length === 1 ? '' : 's'} returned`,
-      details: `View ${dataverseResult.view?.id}; records returned in configured filter and sort order.`
+      summary: `${dataverseResult.records?.length || 0} record${dataverseResult.records?.length === 1 ? '' : 's'} returned${dataverseResult.recordPage ? ` · ${dataverseResult.recordPage.completeness}` : ''}`,
+      details:
+        `View ${dataverseResult.view?.id}; records returned in configured filter and sort order. ${dataverseResult.warnings?.join(' ') || ''}`.trim()
     };
   }
 

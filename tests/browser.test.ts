@@ -35,6 +35,34 @@ describe('browser boundary', () => {
     expect(executeScript).not.toHaveBeenCalled();
   });
 
+  it('refuses a mismatched request origin or an uncommitted navigation', async () => {
+    const executeScript = vi.fn();
+    const tabs = [
+      { id: 1, url: `${origin}/main.aspx`, pendingUrl: 'https://other.crm.dynamics.com/main.aspx' }
+    ];
+    vi.stubGlobal('chrome', { tabs: { query: async () => tabs }, scripting: { executeScript } });
+    expect(
+      (
+        await executePrimitiveInActiveTab(context, {
+          action: 'query_records',
+          origin,
+          fetchXml: '<fetch/>'
+        })
+      ).ok
+    ).toBe(false);
+    tabs[0]!.pendingUrl = '';
+    expect(
+      (
+        await executePrimitiveInActiveTab(context, {
+          action: 'query_records',
+          origin: 'https://other.crm.dynamics.com',
+          fetchXml: '<fetch/>'
+        })
+      ).ok
+    ).toBe(false);
+    expect(executeScript).not.toHaveBeenCalled();
+  });
+
   it('uses the self-contained MAIN-world executor and a serializable request', async () => {
     const executeScript = vi.fn(async () => [{ result: { ok: true, action: 'resolve_schema' } }]);
     vi.stubGlobal('chrome', {

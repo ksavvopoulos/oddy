@@ -83,6 +83,11 @@ export async function executeDataversePrimitive(
     ReferencingEntityNavigationPropertyName?: string;
   };
 
+  const nativeOperation =
+    (request.action === 'query_records' && !('query' in request)) ||
+    (request.action === 'upsert_view' && !('query' in request)) ||
+    request.action === 'get_view' ||
+    request.action === 'execute_view';
   const managedViewName = 'AI Result';
   const headers = {
     Accept: 'application/json',
@@ -147,7 +152,7 @@ export async function executeDataversePrimitive(
       parsed.pathname.startsWith('/api/data/v9.2/EntityDefinitions');
     if (cacheable && Object.hasOwn(preparationCache.responses, url))
       return structuredClone(preparationCache.responses[url]) as T;
-    const response = await fetch(url, {
+    const response = await (nativeOperation ? nativeFetch : fetch)(url, {
       credentials: 'include',
       headers: preferFormatted
         ? {
@@ -164,6 +169,69 @@ export async function executeDataversePrimitive(
     const value = (await response.json()) as T;
     if (cacheable) preparationCache.responses[url] = structuredClone(value);
     return value;
+  };
+
+  // Native operations never accept a caller-supplied URL, method, or headers.
+  // Bound both the download and its duration, and refuse redirects (including same-origin ones).
+  const nativeFetch = async (url: string, init: RequestInit = {}): Promise<Response> => {
+    const target = new URL(url);
+    if (
+      target.origin !== request.origin ||
+      target.username ||
+      target.password ||
+      target.hash ||
+      !target.pathname.startsWith('/api/data/v9.2/')
+    )
+      throw new Error('Native requests must stay in the active Dataverse environment.');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(url, {
+        ...init,
+        credentials: 'include',
+        redirect: 'error',
+        signal: controller.signal
+      });
+      const maximum = 1024 * 1024;
+      if (Number(response.headers.get('Content-Length')) > maximum)
+        throw new Error(
+          'Dataverse response exceeds 1 MiB; select fewer columns or a smaller page.'
+        );
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      const parts: string[] = [];
+      let size = 0;
+      if (reader) {
+        try {
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            size += chunk.value.byteLength;
+            if (size > maximum)
+              throw new Error(
+                'Dataverse response exceeds 1 MiB; select fewer columns or a smaller page.'
+              );
+            parts.push(decoder.decode(chunk.value, { stream: true }));
+          }
+          parts.push(decoder.decode());
+        } finally {
+          await reader.cancel();
+        }
+      }
+      return new Response(
+        response.status === 204 || response.status === 205 || response.status === 304
+          ? null
+          : parts.join(''),
+        {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers
+        }
+      );
+    } finally {
+      controller.abort();
+      clearTimeout(timeout);
+    }
   };
 
   // A preparation can seed these caches; execution always starts with fresh metadata.
@@ -188,7 +256,7 @@ export async function executeDataversePrimitive(
     let metadata: EntityMetadata | undefined;
     for (const candidate of [...new Set(candidates)]) {
       if (!/^[a-z0-9_]+$/i.test(candidate)) continue;
-      const response = await fetch(
+      const response = await (nativeOperation ? nativeFetch : fetch)(
         `${request.origin}/api/data/v9.2/EntityDefinitions(LogicalName='${candidate}')?$select=${select}`,
         { credentials: 'include', headers }
       );
@@ -617,15 +685,20 @@ export async function executeDataversePrimitive(
 
   const getView = async (
     entity: ResolvedDataverseEntity
-  ): Promise<{ id: string; name: string; fetchXml: string; layoutXml?: string } | undefined> => {
+  ): Promise<
+    { id: string; name: string; fetchXml: string; layoutXml?: string; etag?: string } | undefined
+  > => {
     const url = new URL(`${request.origin}/api/data/v9.2/userqueries`);
     url.searchParams.set(
       '$select',
       'userqueryid,name,fetchxml,layoutxml,returnedtypecode,createdon'
     );
-    url.searchParams.set('$filter', `name eq '${odataEscape(managedViewName)}'`);
-    url.searchParams.set('$orderby', 'createdon asc');
-    url.searchParams.set('$top', '50');
+    url.searchParams.set(
+      '$filter',
+      `name eq '${odataEscape(managedViewName)}' and returnedtypecode eq '${odataEscape(entity.logicalName)}'`
+    );
+    url.searchParams.set('$orderby', 'createdon asc,userqueryid asc');
+    url.searchParams.set('$top', '1');
     const payload = await getJson<{
       value?: Array<{
         userqueryid?: string;
@@ -633,6 +706,7 @@ export async function executeDataversePrimitive(
         fetchxml?: string;
         layoutxml?: string;
         returnedtypecode?: string | number;
+        '@odata.etag'?: string;
       }>;
     }>(url.toString());
     const view = payload.value?.find((candidate) => {
@@ -647,62 +721,301 @@ export async function executeDataversePrimitive(
       id: view.userqueryid.replace(/[{}]/g, ''),
       name: managedViewName,
       fetchXml: view.fetchxml,
-      layoutXml: view.layoutxml
+      layoutXml: view.layoutxml,
+      etag: view['@odata.etag']
     };
   };
 
-  const parseView = (
-    entity: ResolvedDataverseEntity,
-    fetchXml: string,
-    layoutXml?: string
-  ): { query: DataverseQuerySpec; layoutColumns: string[] } => {
-    const parser = new DOMParser();
-    const fetchDocument = parser.parseFromString(fetchXml, 'application/xml');
-    if (fetchDocument.querySelector('parsererror')) {
-      throw new Error('The personal view contains invalid FetchXML.');
+  const parseNativeXml = (xml: string, rootName: string): XMLDocument => {
+    if (
+      typeof xml !== 'string' ||
+      !xml.trim() ||
+      xml.length > 131072 ||
+      /<!DOCTYPE|<!ENTITY/i.test(xml)
+    )
+      throw new Error(
+        `A complete ${rootName} XML document (at most 128 KiB, no DTD/entities) is required.`
+      );
+    const document = new DOMParser().parseFromString(xml, 'application/xml');
+    if (
+      document.querySelector('parsererror') ||
+      document.doctype ||
+      document.documentElement?.tagName !== rootName ||
+      document.documentElement.namespaceURI ||
+      document.getElementsByTagName('*').length > 5000
+    )
+      throw new Error(`Invalid ${rootName} XML document.`);
+    return document;
+  };
+  const nativeTable = (xml: string): { document: XMLDocument; table: string } => {
+    const document = parseNativeXml(xml, 'fetch');
+    const entities = [...document.documentElement.children].filter(
+      (node) => node.tagName === 'entity'
+    );
+    const table = entities[0]?.getAttribute('name') || '';
+    if (entities.length !== 1 || !/^[a-z][a-z0-9_]{0,99}$/.test(table))
+      throw new Error('FetchXML requires one root entity with a logical table name.');
+    return { document, table };
+  };
+  const pageSizeValue = (value: unknown): number => {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > 100)
+      throw new Error('pageSize must be an integer from 1 to 100.');
+    return value;
+  };
+  type NativeCursor = {
+    version: 1;
+    origin: string;
+    action: 'query_records' | 'execute_view';
+    fetchXml: string;
+    pageSize: number;
+    page: number;
+    cookie?: string;
+    view?: DataversePrimitiveResult['view'];
+  };
+  const nativePayload = async (url: URL): Promise<Record<string, unknown>> => {
+    const preference =
+      'odata.include-annotations="OData.Community.Display.V1.FormattedValue,Microsoft.Dynamics.CRM.lookuplogicalname,Microsoft.Dynamics.CRM.fetchxmlpagingcookie,Microsoft.Dynamics.CRM.morerecords,Microsoft.Dynamics.CRM.totalrecordcount,Microsoft.Dynamics.CRM.totalrecordcountlimitexceeded"';
+    if (url.toString().length <= 30000) {
+      const response = await nativeFetch(url.toString(), {
+        headers: { ...headers, Prefer: preference }
+      });
+      if (!response.ok)
+        throw new Error(
+          `Dataverse query failed (${response.status}): ${(await response.text()).slice(0, 500)}`
+        );
+      return (await response.json()) as Record<string, unknown>;
     }
-    const entityElement = fetchDocument.getElementsByTagName('entity')[0];
-    if (!entityElement) throw new Error('The personal view FetchXML has no entity element.');
-    const columns = [...entityElement.getElementsByTagName('attribute')]
-      .map((node) => node.getAttribute('name') || '')
-      .filter(Boolean);
-    const filters = [...entityElement.getElementsByTagName('condition')]
-      .map((node) => {
-        const column = node.getAttribute('attribute');
-        const operator = node.getAttribute('operator') as DataverseFilterOperator | null;
-        if (!column || !operator || !allowedOperators.has(operator)) return undefined;
-        const value = node.getAttribute('value');
-        const entityType = node.getAttribute('uitype');
-        return {
-          column,
-          operator,
-          ...(value != null ? { value } : {}),
-          ...(entityType ? { entityType } : {})
-        } satisfies DataverseFilterSpec;
-      })
-      .filter((value): value is DataverseFilterSpec => Boolean(value));
-    const orderBy = [...entityElement.getElementsByTagName('order')]
-      .map((node) => {
-        const column = node.getAttribute('attribute');
-        if (!column) return undefined;
-        return {
-          column,
-          direction: node.getAttribute('descending') === 'true' ? 'desc' : 'asc'
-        } satisfies DataverseOrderSpec;
-      })
-      .filter((value): value is DataverseOrderSpec => Boolean(value));
-    let layoutColumns: string[] = [];
-    if (layoutXml) {
-      const layoutDocument = parser.parseFromString(layoutXml, 'application/xml');
-      if (!layoutDocument.querySelector('parsererror')) {
-        layoutColumns = [...layoutDocument.getElementsByTagName('cell')]
-          .map((node) => node.getAttribute('name') || '')
-          .filter(Boolean);
+    // The envelope contains exactly one constructed GET, never model-supplied batch operations.
+    if (url.toString().length > 65000)
+      throw new Error('FetchXML URL exceeds the read-only batch limit; reduce the query size.');
+    const boundary = `batch_${crypto.randomUUID().replace(/-/g, '')}`;
+    const response = await nativeFetch(`${request.origin}/api/data/v9.2/$batch`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': `multipart/mixed; boundary=${boundary}` },
+      body: `--${boundary}\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\nContent-ID: 1\r\n\r\nGET ${url.toString()} HTTP/1.1\r\nAccept: application/json\r\nPrefer: ${preference}\r\n\r\n--${boundary}--\r\n`
+    });
+    if (!response.ok) throw new Error(`Read-only query batch failed (${response.status}).`);
+    const responseBoundary = /boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i
+      .exec(response.headers.get('Content-Type') || '')
+      ?.slice(1)
+      .find(Boolean);
+    if (!responseBoundary) throw new Error('Missing read-only batch response boundary.');
+    const parts = (await response.text())
+      .split(`--${responseBoundary}`)
+      .slice(1)
+      .filter((part) => !part.startsWith('--') && part.trim());
+    if (parts.length !== 1) throw new Error('Ambiguous read-only batch response.');
+    const content = parts[0]!
+      .split(/\r?\n\r?\n/)
+      .slice(1)
+      .join('\r\n\r\n');
+    const separator = /\r?\n\r?\n/.exec(content);
+    if (!/^HTTP\/1\.[01] 200\b/.test(content) || !separator)
+      throw new Error(`Query failed inside read-only batch: ${content.slice(0, 500)}`);
+    return JSON.parse(content.slice(separator.index + separator[0].length).trim()) as Record<
+      string,
+      unknown
+    >;
+  };
+  const executeNativeRead = async (options: {
+    fetchXml?: string;
+    pageSize?: number;
+    cursor?: string;
+    table?: string;
+  }): Promise<DataversePrimitiveResult> => {
+    const action = request.action === 'execute_view' ? 'execute_view' : 'query_records';
+    let state: NativeCursor;
+    if (options.cursor !== undefined) {
+      if (
+        typeof options.cursor !== 'string' ||
+        options.cursor.length > 262144 ||
+        options.fetchXml !== undefined ||
+        options.table !== undefined ||
+        options.pageSize !== undefined
+      )
+        throw new Error('Continue nextCursor unchanged with all other query arguments null.');
+      state = JSON.parse(options.cursor) as NativeCursor;
+      if (
+        !state ||
+        state.version !== 1 ||
+        state.origin !== request.origin ||
+        state.action !== action ||
+        !Number.isSafeInteger(state.page) ||
+        state.page < 2 ||
+        state.page >= Number.MAX_SAFE_INTEGER ||
+        (state.cookie !== undefined &&
+          (typeof state.cookie !== 'string' ||
+            !state.cookie ||
+            state.cookie.length > 100000 ||
+            /<!DOCTYPE|<!ENTITY/i.test(state.cookie)))
+      )
+        throw new Error('Invalid or wrong-environment query cursor.');
+      pageSizeValue(state.pageSize);
+      if (!state.cookie && state.page * state.pageSize > 50000)
+        throw new Error('The cursor exceeds the 50,000-row simple-paging limit.');
+    } else {
+      let fetchXml = options.fetchXml;
+      let view: DataversePrimitiveResult['view'];
+      if (action === 'execute_view') {
+        if (!options.table) throw new Error('A logical table name is required.');
+        const entity = await resolveEntity(options.table);
+        const saved = await getView(entity);
+        if (!saved)
+          throw new Error(
+            `The ${managedViewName} personal view does not exist for ${entity.logicalName}.`
+          );
+        fetchXml = saved.fetchXml;
+        view = {
+          id: saved.id,
+          name: saved.name,
+          tableLogicalName: entity.logicalName,
+          etag: saved.etag
+        };
+      }
+      if (!fetchXml)
+        throw new Error(
+          'Complete native FetchXML is required; structured query arguments are no longer model inputs.'
+        );
+      const { document } = nativeTable(fetchXml);
+      const root = document.documentElement;
+      if (
+        root.hasAttribute('paging-cookie') ||
+        (root.hasAttribute('page') && root.getAttribute('page') !== '1')
+      )
+        throw new Error('Use nextCursor, not caller-supplied page or paging-cookie attributes.');
+      const count = root.hasAttribute('count') ? Number(root.getAttribute('count')) : undefined;
+      const top = root.hasAttribute('top') ? Number(root.getAttribute('top')) : undefined;
+      if (top !== undefined && (count !== undefined || root.hasAttribute('page')))
+        throw new Error('FetchXML top cannot be combined with count or page.');
+      const pageSize = pageSizeValue(options.pageSize ?? count ?? (top !== undefined ? top : 50));
+      if (top !== undefined && (!Number.isSafeInteger(top) || top < 1 || top > pageSize))
+        throw new Error(
+          'FetchXML top must fit one bounded page; remove top and use paging for larger results.'
+        );
+      state = { version: 1, origin: request.origin, action, fetchXml, pageSize, page: 1, view };
+    }
+    const { document, table } = nativeTable(state.fetchXml);
+    const entity = await resolveEntity(table);
+    if (
+      !/^[a-z][a-z0-9_]*$/.test(entity.entitySetName) ||
+      (state.view && state.view.tableLogicalName !== entity.logicalName)
+    )
+      throw new Error('Query entity does not match the view or resolved collection.');
+    const root = document.documentElement;
+    const top = root.hasAttribute('top') ? Number(root.getAttribute('top')) : undefined;
+    if (
+      top !== undefined &&
+      (state.page !== 1 || !Number.isSafeInteger(top) || top < 1 || top > state.pageSize)
+    )
+      throw new Error('Invalid top-limited query cursor.');
+    const warnings: string[] = [];
+    if (top === undefined) {
+      root.setAttribute('count', String(state.pageSize));
+      root.setAttribute('page', String(state.page));
+      root.removeAttribute('paging-cookie');
+      if (state.cookie) root.setAttribute('paging-cookie', state.cookie);
+      if (root.getAttribute('distinct') === 'true' && !root.getElementsByTagName('order').length)
+        warnings.push(
+          'Distinct paging requires an explicit deterministic order; no order was added.'
+        );
+    } else
+      warnings.push('This query is top-limited; it does not establish an exhaustive matching set.');
+    const fetchXml = new XMLSerializer().serializeToString(document);
+    const url = new URL(`${request.origin}/api/data/v9.2/${entity.entitySetName}`);
+    url.searchParams.set('fetchXml', fetchXml);
+    const payload = await nativePayload(url);
+    if (
+      !Array.isArray(payload.value) ||
+      payload.value.some((row) => !row || typeof row !== 'object' || Array.isArray(row))
+    )
+      throw new Error('Dataverse returned invalid query rows.');
+    const rawRecords = payload.value as Array<Record<string, unknown>>;
+    if (rawRecords.length > (top ?? state.pageSize))
+      throw new Error('Dataverse exceeded the requested page bound.');
+    const selectedColumns = [
+      ...new Set(rawRecords.flatMap((row) => Object.keys(row).filter((key) => !key.includes('@'))))
+    ];
+    const records = mapRecords(rawRecords, selectedColumns);
+    const more = payload['@Microsoft.Dynamics.CRM.morerecords'];
+    if (more !== undefined && typeof more !== 'boolean')
+      throw new Error('Invalid server more-records annotation.');
+    if (more === false && payload['@odata.nextLink'])
+      throw new Error('Dataverse returned conflicting continuation information.');
+    const hasMore =
+      top === undefined &&
+      (more ?? (Boolean(payload['@odata.nextLink']) || rawRecords.length === state.pageSize)) ===
+        true;
+    let cookie: string | undefined;
+    const rawCookie = payload['@Microsoft.Dynamics.CRM.fetchxmlpagingcookie'];
+    if (hasMore && rawCookie !== undefined && rawCookie !== '') {
+      if (typeof rawCookie !== 'string') throw new Error('Invalid server paging cookie.');
+      const cookieDocument = parseNativeXml(rawCookie, 'cookie');
+      const encoded = cookieDocument.documentElement.getAttribute('pagingcookie');
+      cookie =
+        encoded === null
+          ? rawCookie
+          : encoded
+            ? decodeURIComponent(decodeURIComponent(encoded))
+            : undefined;
+      if (cookie) {
+        parseNativeXml(cookie, 'cookie');
+        if (cookie === state.cookie || cookie.length > 100000)
+          throw new Error('Server paging cookie made no progress or exceeds the limit.');
       }
     }
+    let incomplete = false;
+    if (hasMore && !cookie) {
+      warnings.push(
+        'No paging cookie was returned; simple paging is limited to 50,000 rows and is not snapshot isolation.'
+      );
+      if ((state.page + 1) * state.pageSize > 50000) {
+        incomplete = true;
+        warnings.push(
+          'Another full page would exceed the simple-paging limit; results are incomplete.'
+        );
+      }
+    }
+    if (hasMore && !rawRecords.length) {
+      incomplete = true;
+      warnings.push(
+        'The server reported more records but returned no rows; continuation stopped to avoid a no-progress loop.'
+      );
+    }
+    const totalCount = payload['@Microsoft.Dynamics.CRM.totalrecordcount'];
+    if (payload['@Microsoft.Dynamics.CRM.totalrecordcountlimitexceeded'] === true)
+      warnings.push(
+        'The Dataverse reported total count reached its server limit; it is not an exact total.'
+      );
+    const nextCursor =
+      hasMore && !incomplete
+        ? JSON.stringify({ ...state, page: state.page + 1, cookie })
+        : undefined;
+    if (nextCursor && nextCursor.length > 262144)
+      throw new Error('Query continuation exceeds the cursor size limit.');
     return {
-      query: { table: entity.logicalName, columns, filters, orderBy },
-      layoutColumns
+      ok: true,
+      action,
+      entity,
+      fetchXml,
+      records,
+      view: state.view,
+      totalCount: typeof totalCount === 'number' && totalCount >= 0 ? totalCount : undefined,
+      recordPage: {
+        page: state.page,
+        pageSize: state.pageSize,
+        returned: records.length,
+        hasMore,
+        nextCursor,
+        completeness: incomplete
+          ? 'incomplete'
+          : top !== undefined
+            ? 'top-limited'
+            : hasMore
+              ? 'more-pages'
+              : 'complete',
+        pagingMode: top !== undefined ? 'none' : cookie || state.cookie ? 'cookie' : 'simple'
+      },
+      warnings: warnings.length ? warnings : undefined
     };
   };
 
@@ -1451,6 +1764,8 @@ export async function executeDataversePrimitive(
   };
 
   try {
+    if (nativeOperation && window.location.origin !== request.origin)
+      throw new Error('The active Dataverse environment changed.');
     if (request.action.startsWith('bulk_') && window.location.origin !== request.origin)
       throw new Error('The Dataverse environment changed.');
     if (request.action === 'bulk_identity') {
@@ -1792,6 +2107,7 @@ export async function executeDataversePrimitive(
     }
 
     if (request.action === 'query_records') {
+      if (!('query' in request)) return await executeNativeRead(request);
       const resolved = await resolveQuery(request.query);
       const hasTop = resolved.query.top !== undefined;
       const compiled = buildFetchXml(
@@ -1889,25 +2205,93 @@ export async function executeDataversePrimitive(
           `The ${managedViewName} personal view does not exist for ${entity.logicalName}.`
         );
       }
-      const parsed = parseView(entity, view.fetchXml, view.layoutXml);
       return {
         ok: true,
         action: request.action,
         entity,
-        query: parsed.query,
         fetchXml: view.fetchXml,
         layoutXml: view.layoutXml,
         view: {
           id: view.id,
           name: view.name,
           tableLogicalName: entity.logicalName,
-          query: parsed.query,
-          layoutColumns: parsed.layoutColumns
+          etag: view.etag
         }
       };
     }
 
     if (request.action === 'upsert_view') {
+      if (!('query' in request)) {
+        const { table } = nativeTable(request.fetchXml);
+        parseNativeXml(request.layoutXml, 'grid');
+        if (request.table !== table)
+          throw new Error('The view table must match the FetchXML root entity logical name.');
+        const entity = await resolveEntity(table);
+        const existing = await getView(entity);
+        if (
+          existing &&
+          (!request.etag ||
+            request.etag !== existing.etag ||
+            !/^(?:W\/)?"[^"\r\n]+"$/.test(request.etag))
+        )
+          throw new Error(
+            'The view changed or its exact ETag is missing. Get the view again before updating.'
+          );
+        if (!existing && request.etag)
+          throw new Error('The previously read view no longer exists; it was not recreated.');
+        const id = existing ? normalizeGuid(existing.id, 'view') : undefined;
+        const response = await nativeFetch(
+          `${request.origin}/api/data/v9.2/userqueries${id ? `(${id})` : ''}`,
+          {
+            method: id ? 'PATCH' : 'POST',
+            headers: {
+              ...headers,
+              ...(id ? { 'If-Match': request.etag! } : { Prefer: 'return=representation' })
+            },
+            body: JSON.stringify({
+              name: managedViewName,
+              querytype: 0,
+              returnedtypecode: table,
+              fetchxml: request.fetchXml,
+              layoutxml: request.layoutXml
+            })
+          }
+        ).catch((error: unknown) => {
+          throw new Error(
+            `View save outcome is unconfirmed: ${error instanceof Error ? error.message : String(error)}. The view may have been saved; inspect it before retrying.`
+          );
+        });
+        if (!response.ok)
+          throw new Error(
+            `Could not save ${managedViewName} (${response.status}): ${(await response.text()).slice(0, 500)}. Get the view again; no automatic retry was made.`
+          );
+        let viewId = id;
+        if (!viewId) {
+          const created = (await response.json().catch(() => ({}))) as { userqueryid?: string };
+          viewId =
+            created.userqueryid ||
+            /userqueries\(([^)]+)\)/i.exec(response.headers.get('OData-EntityId') || '')?.[1];
+        }
+        if (!viewId)
+          throw new Error(
+            'The view may have been saved but Dataverse returned no view ID; inspect before retrying.'
+          );
+        return {
+          ok: true,
+          action: request.action,
+          entity,
+          fetchXml: request.fetchXml,
+          layoutXml: request.layoutXml,
+          view: {
+            id: normalizeGuid(viewId, 'view'),
+            name: managedViewName,
+            tableLogicalName: table,
+            created: !existing,
+            etag: response.headers.get('ETag') || undefined
+          }
+        };
+      }
+      // Kept for internal/backward compatibility; not advertised to the model.
       const resolved = await resolveQuery(request.query);
       if (typeof resolved.entity.objectTypeCode !== 'number') {
         throw new Error('The target table object type code is unavailable.');
@@ -2011,52 +2395,7 @@ export async function executeDataversePrimitive(
       };
     }
 
-    const entity = await resolveEntity(request.table);
-    const view = await getView(entity);
-    if (!view) {
-      throw new Error(
-        `The ${managedViewName} personal view does not exist for ${entity.logicalName}.`
-      );
-    }
-    let fetchXml = view.fetchXml;
-    const top = Math.min(Math.max(request.top || 10, 1), 50);
-    fetchXml = fetchXml.replace(
-      /\s+(?:returntotalrecordcount|page|count|paging-cookie)=["'][^"']*["']/gi,
-      ''
-    );
-    if (/\btop=["'][^"']+["']/i.test(fetchXml)) {
-      fetchXml = fetchXml.replace(/\btop=["'][^"']+["']/i, `top="${top}"`);
-    } else {
-      fetchXml = fetchXml.replace(/<fetch\b/i, `<fetch top="${top}"`);
-    }
-    const parsed = parseView(entity, view.fetchXml, view.layoutXml);
-    const selectedColumns = [
-      entity.primaryIdAttribute,
-      entity.primaryNameAttribute,
-      ...(parsed.query.columns || [])
-    ]
-      .filter((column): column is string => Boolean(column))
-      .filter((column, index, values) => values.indexOf(column) === index);
-    const url = new URL(`${request.origin}/api/data/v9.2/${entity.entitySetName}`);
-    url.searchParams.set('fetchXml', fetchXml);
-    const payload = await getJson<{ value?: Array<Record<string, unknown>> }>(url.toString(), true);
-    return {
-      ok: true,
-      action: request.action,
-      entity,
-      query: parsed.query,
-      fetchXml,
-      layoutXml: view.layoutXml,
-      records: mapRecords(payload.value || [], selectedColumns),
-      totalCount: payload.value?.length || 0,
-      view: {
-        id: view.id,
-        name: view.name,
-        tableLogicalName: entity.logicalName,
-        query: parsed.query,
-        layoutColumns: parsed.layoutColumns
-      }
-    };
+    return await executeNativeRead(request);
   } catch (error) {
     return {
       ok: false,

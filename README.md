@@ -20,7 +20,7 @@ Oddy is a Chrome Manifest V3 side-panel assistant for Dataverse data and Power A
 - Gives Azure OpenAI composable schema/query/navigation tools, native cloud-flow definition tools, and preparation-only bulk-job tools, without exposing write execution
 - Lists modern cloud flows and existing Dataverse connection references, reads complete saved definitions, opens exact flows in Power Automate, and prepares approval-gated creates or general edits
 - Creates and edits native Power Automate definitions, including conditions, loops, branches, expressions, and existing connectors; new flows remain Off
-- Uses a shared structured query model for filters, selected columns, sorting, row limits, view FetchXML, and grid layouts
+- Executes native FetchXML reads and preserves complete native FetchXML/grid layouts for `AI Result` views, including nested filters, IN lists, joins, aliases, and aggregates
 - Resolves table and column display names to logical metadata at runtime, including valid target tables for lookup columns
 - Composes multi-step workflows such as finding a named contact, discovering its invoice relationship, creating `AI Result`, navigating to it, and opening its first sorted record
 - Can navigate the active tab to a general list, personal/system view, or specific record
@@ -101,6 +101,16 @@ Tool-enabled prompts use the Azure OpenAI Responses API so reasoning models can 
 ```text
 /openai/v1/responses
 ```
+
+## Native record queries and personal views
+
+`query_dataverse_records` accepts complete FetchXML, not a reduced structured filter language. Oddy can use native operators, nested AND/OR groups, IN lists, linked tables, aliases, distinct results, and aggregates. Resolve logical names first and select the primary key when record identity is needed. Multiple known IDs should normally use one IN query, not one tool call per ID.
+
+Each read returns one page (default 50, maximum 100 rows), `recordPage.completeness`, and an opaque `recordPage.nextCursor`. Continue that cursor unchanged with other query arguments null. Server paging cookies are used when supplied; queries without cookies use simple paging with a disclosed 50,000-row ceiling. Distinct paging requires deterministic ordering. A cursor retains the query, not a database snapshot. Missing rows may be inaccessible, and interrupted or top-limited reads are not exhaustive results. There is no automatic extra count query; request a count in FetchXML if needed and heed server count-limit warnings.
+
+`manage_dataverse_view` gets or saves only the existing managed `AI Result` personal view. Reads return its original FetchXML, layout XML, and ETag without flattening filters or joins. Saves require complete native definitions, with the exact returned ETag for updates (null for creation); concurrent changes fail without retry. Unrelated view fields are not overwritten. `execute_dataverse_view` pages the native definition without rewriting its selection or sort semantics.
+
+Native execution remains environment-bound and read-only except for the explicitly exposed `AI Result` save. It accepts no arbitrary URL, HTTP method, headers, or batch operations. Each HTTP response is bounded to 1 MiB and each request to 30 seconds; XML and cursor sizes are bounded, DTD/entity declarations are rejected, and redirects are refused. Long queries use one constructed read-only GET inside `$batch`, within Dataverse URL limits. Full query semantics and permissions remain Dataverse responsibilities. Bulk jobs retain their separate validated structured selection and approval pipeline.
 
 ## Switching browser tabs
 
@@ -230,7 +240,7 @@ Development commands:
 - AI-assisted skill management is limited to custom skills and must be enabled per request or by default in settings. Skill changes are atomic; individual workflow fields cannot yet be selectively approved.
 - Opening a filtered native list requires permission to create or update personal views (`userquery`). Navigation uses `Xrm.Navigation.navigateTo` first and verifies the requested destination; if an app shell ignores the view ID or the API is unavailable, Oddy falls back to the documented `main.aspx` entity-list URL with personal-view type code `4230`.
 - Personal-view primitives are locked to the name `AI Result`. For each target table, the executor reuses the oldest matching view and updates it instead of creating another. Existing duplicates are left untouched.
-- Structured queries and view layouts require requested columns to be readable and resolvable from the target table's localized metadata.
+- Native record/view tools use logical names and complete XML definitions. Dataverse validates operators, columns, joins, aliases, layout semantics, and signed-in access; schema discovery helps Oddy construct definitions. Internal bulk selections retain their validated structured model.
 - Approved business-record writes support scalar text, number, boolean, date, null, Choice/State/Status labels resolved through option metadata, and single-record Lookup, Owner, and Customer values. Lookup targets are validated through metadata and written with the resolved Dataverse navigation property. Clearing lookups, party-list fields, and multi-select updates are not yet supported.
 - Cloud-flow creates and updates use complete native definitions with explicit approval. Validation checks graph structure, relevant connection references, and static Dataverse metadata, not full Power Automate schemas or expression semantics. Review and validate in Power Automate before publishing. Managed flows, solution selection, publication, activation/deactivation, deletion, sharing, and connection creation are not supported.
 - Marketing-list membership is limited to static lists and one member table per job. Query-backed jobs page all matching accounts, contacts, or leads within the stated bulk limits; the explicit-ID tool retains its 50-member limit. Dynamic-list membership remains query-driven.
@@ -242,6 +252,6 @@ Development commands:
 
 1. Add lookup clearing, party-list, and multi-select mutation support.
 2. Add many-to-many and indirect relationship traversal.
-3. Add richer structured filter groups (`and`/`or`) and linked-entity queries.
+3. Extend native query integration into bulk selection only after reviewing frozen-scope approval and reconciliation guarantees.
 4. Replace direct API-key calls with an Entra-authenticated backend.
 5. Add environment-specific policies and administrator-managed settings.

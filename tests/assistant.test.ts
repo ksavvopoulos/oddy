@@ -105,6 +105,21 @@ describe('assistant tool catalog', () => {
 });
 
 describe('assistant orchestration', () => {
+  it('instructs set-based native reads, explicit paging and lossless view edits', async () => {
+    vi.mocked(callAzureOpenAIResponses).mockResolvedValue({
+      id: 'native',
+      content: 'Ready',
+      toolCalls: []
+    });
+    await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, false);
+    const input = JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[0]?.[1]);
+    expect(input).toContain('Prefer one IN condition');
+    expect(input).toContain('recordPage.nextCursor');
+    expect(input).toContain('preserve all unrelated conditions, group nesting, joins, aliases');
+    expect(input).toContain('exact ETag');
+    expect(input).toContain('Bulk selection retains its separate validated structured plan');
+  });
+
   it('bypasses browser inspection when no tools are permitted', async () => {
     vi.mocked(callAzureOpenAI).mockResolvedValue({ content: 'Hello' });
     expect(

@@ -15,7 +15,7 @@ export const SKILL_TOOL_OPTIONS: Array<{
   {
     name: 'query_dataverse_records',
     label: 'Query records',
-    description: 'Run structured, read-only Dataverse queries.'
+    description: 'Run native FetchXML reads with paging.'
   },
   {
     name: 'discover_dataverse_relationships',
@@ -135,20 +135,16 @@ const FILTER_SCHEMA = {
   required: ['column', 'operator']
 };
 
-const ORDER_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    column: {
-      type: 'string',
-      description: 'Column logical name or display name.'
-    },
-    direction: {
-      type: 'string',
-      enum: ['asc', 'desc']
-    }
-  },
-  required: ['column', 'direction']
+const NATIVE_FETCH_SCHEMA = {
+  type: ['string', 'null'],
+  description:
+    'Complete native FetchXML using logical table/column names. Null when continuing a cursor.'
+};
+const QUERY_PAGE_SIZE_SCHEMA = { type: ['integer', 'null'], minimum: 1, maximum: 100 };
+const QUERY_CURSOR_SCHEMA = {
+  type: ['string', 'null'],
+  description:
+    'Opaque nextCursor from the prior page. Continue unchanged with other query arguments null.'
 };
 
 export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
@@ -179,18 +175,16 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'query_dataverse_records',
       description:
-        'Run a signed-in, read-only Dataverse query using structured columns, filters, sorting, and a row limit. Display names are accepted and record IDs are returned.',
+        'Execute a signed-in, read-only native FetchXML query. Supports Dataverse operators, nested AND/OR, IN lists, link-entity joins, aliases, distinct and aggregates; Dataverse validates query semantics. Prefer one IN query for known IDs instead of repeated exact-ID calls. Resolve logical names first. Select needed fields and the primary ID when record identity is needed; aggregate/distinct rows may not have IDs. Reads one bounded page (default 50, maximum 100). Do not supply page or paging-cookie; use nextCursor with other arguments null. Continue all pages before claiming completeness; missing records may be inaccessible. top must fit one page and is explicitly top-limited. Results retain aliases and formatted values. No automatic count query or writes.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          table: { type: 'string', description: 'Table logical or display name.' },
-          columns: { type: 'array', maxItems: 20, items: { type: 'string' } },
-          filters: { type: 'array', maxItems: 20, items: FILTER_SCHEMA },
-          orderBy: { type: 'array', maxItems: 5, items: ORDER_SCHEMA },
-          top: { type: 'integer', minimum: 1, maximum: 50 }
+          fetchXml: NATIVE_FETCH_SCHEMA,
+          pageSize: QUERY_PAGE_SIZE_SCHEMA,
+          cursor: QUERY_CURSOR_SCHEMA
         },
-        required: ['table']
+        required: ['fetchXml', 'pageSize', 'cursor']
       }
     }
   },
@@ -216,24 +210,27 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'manage_dataverse_view',
       description:
-        'Get or upsert a reusable personal view from a complete structured query. Use get before modifying an existing view, then upsert the full revised definition. Defaults to AI Result.',
+        'Get or save the AI Result personal view for a logical table name. get returns complete original FetchXML, layout XML and ETag; it never flattens filters or joins. Before editing, get the existing view and preserve unrelated native definition/layout content. upsert requires complete fetchXml and layoutXml, plus the exact ETag for updates (null for creation). A stale or missing update ETag fails without retry. Native query semantics remain Dataverse responsibilities. Scope remains AI Result only, not arbitrary views or business-record writes.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
           action: { type: 'string', enum: ['get', 'upsert'] },
-          table: { type: 'string', description: 'Table logical or display name.' },
-          columns: { type: 'array', maxItems: 20, items: { type: 'string' } },
-          filters: { type: 'array', maxItems: 20, items: FILTER_SCHEMA },
-          orderBy: { type: 'array', maxItems: 5, items: ORDER_SCHEMA },
-          layoutColumns: {
-            type: 'array',
-            maxItems: 12,
-            items: { type: 'string' },
-            description: 'Columns visible in the grid layout.'
+          table: {
+            type: 'string',
+            description: 'Table logical name. Resolve display names first.'
+          },
+          fetchXml: NATIVE_FETCH_SCHEMA,
+          layoutXml: {
+            type: ['string', 'null'],
+            description: 'Complete native grid layout XML for upsert; null for get.'
+          },
+          etag: {
+            type: ['string', 'null'],
+            description: 'Exact ETag from get for updates; null for creation or get.'
           }
         },
-        required: ['action', 'table']
+        required: ['action', 'table', 'fetchXml', 'layoutXml', 'etag']
       }
     }
   },
@@ -242,15 +239,19 @@ export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'execute_dataverse_view',
       description:
-        'Execute a personal view and return its first records in the view’s existing filter and sort order. Defaults to AI Result.',
+        'Read one bounded page from the AI Result personal view without flattening its FetchXML. Returns joined/aliased/aggregate fields and explicit paging/completeness. Default page size 50; maximum 100. Continue nextCursor unchanged with table and pageSize null. The cursor freezes the read definition, not a database snapshot. No writes.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          table: { type: 'string', description: 'Table logical or display name.' },
-          top: { type: 'integer', minimum: 1, maximum: 50 }
+          table: {
+            type: ['string', 'null'],
+            description: 'Logical table name for the initial read; null for continuation.'
+          },
+          pageSize: QUERY_PAGE_SIZE_SCHEMA,
+          cursor: QUERY_CURSOR_SCHEMA
         },
-        required: ['table']
+        required: ['table', 'pageSize', 'cursor']
       }
     }
   },

@@ -109,7 +109,7 @@ export const BUILT_IN_SKILLS: OddySkill[] = [
       {
         id: 'find-list',
         instruction:
-          'Query the list table for listname exactly equal to listName. Request listname, type, and createdfromcode. Stop and explain if no list matches; if multiple lists match, do not guess.'
+          'Use native FetchXML to query the list table for listname exactly equal to listName, XML-escaping the literal input. Select listid, listname, type, and createdfromcode. Continue returned pages before deciding uniqueness. Stop and explain if no list matches; if multiple lists match, do not guess.'
       },
       {
         id: 'find-members',

@@ -16,7 +16,6 @@ import {
   optionalString,
   stringArray,
   numberValue,
-  queryFromArguments,
   mutationValueArray,
   marketingListMemberArray,
   skillFromToolArguments
@@ -205,6 +204,36 @@ export async function executeAssistantTool(
     }
   }
 
+  const nativeKeys: Record<string, string[]> = {
+    query_dataverse_records: ['fetchXml', 'pageSize', 'cursor'],
+    manage_dataverse_view: ['action', 'table', 'fetchXml', 'layoutXml', 'etag'],
+    execute_dataverse_view: ['table', 'pageSize', 'cursor']
+  };
+  const keys = Object.hasOwn(nativeKeys, toolName) ? nativeKeys[toolName] : undefined;
+  if (keys) {
+    const invalid = Object.keys(args).find(
+      (key) =>
+        !keys.includes(key) ||
+        (args[key] != null && typeof args[key] !== (key === 'pageSize' ? 'number' : 'string'))
+    );
+    if (invalid)
+      return {
+        ok: false,
+        error: `Invalid native tool argument: ${invalid}. Use the advertised native XML/paging interface.`
+      };
+    if (toolName === 'manage_dataverse_view' && args.action !== 'get' && args.action !== 'upsert')
+      return { ok: false, error: 'View action must be get or upsert.' };
+    if (
+      toolName === 'manage_dataverse_view' &&
+      args.action === 'get' &&
+      (args.fetchXml != null || args.layoutXml != null || args.etag != null)
+    )
+      return {
+        ok: false,
+        error: 'View get accepts table only; definition and ETag arguments must be null.'
+      };
+  }
+
   let request: DataversePrimitiveRequest;
   if (toolName === 'resolve_dataverse_schema') {
     request = {
@@ -217,7 +246,9 @@ export async function executeAssistantTool(
     request = {
       action: 'query_records',
       origin: context.origin,
-      query: queryFromArguments(args)
+      fetchXml: typeof args.fetchXml === 'string' ? args.fetchXml : undefined,
+      pageSize: typeof args.pageSize === 'number' ? args.pageSize : undefined,
+      cursor: optionalString(args.cursor)
     };
   } else if (toolName === 'discover_dataverse_relationships') {
     request = {
@@ -238,15 +269,18 @@ export async function executeAssistantTool(
         : {
             action: 'upsert_view',
             origin: context.origin,
-            query: queryFromArguments(args),
-            layoutColumns: stringArray(args.layoutColumns, 12)
+            table: stringValue(args.table),
+            fetchXml: typeof args.fetchXml === 'string' ? args.fetchXml : '',
+            layoutXml: typeof args.layoutXml === 'string' ? args.layoutXml : '',
+            etag: optionalString(args.etag)
           };
   } else if (toolName === 'execute_dataverse_view') {
     request = {
       action: 'execute_view',
       origin: context.origin,
-      table: stringValue(args.table),
-      top: numberValue(args.top, 10, 1, 50)
+      table: optionalString(args.table),
+      pageSize: typeof args.pageSize === 'number' ? args.pageSize : undefined,
+      cursor: optionalString(args.cursor)
     };
   } else if (toolName === 'prepare_dataverse_record_change') {
     request = {
