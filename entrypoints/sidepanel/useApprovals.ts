@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PreparedSchemaChange, SchemaChangeResult } from '../../lib/schema/contracts';
+import type { FormChangeResult, PreparedFormChange } from '../../lib/forms/contracts';
 import type { BulkExecutionOptions, BulkJobSummary } from '../../lib/bulk/contracts';
 import type {
   DataverseFlowChangeExecutionResult,
@@ -19,6 +20,7 @@ import type {
   StoredMutationApprovalState,
   StoredFlowChangeApprovalState,
   StoredSchemaChangeApprovalState,
+  StoredFormChangeApprovalState,
   StoredListMembershipApprovalState,
   StoredSkillChangeApprovalState,
   StoredBulkJobApprovalState
@@ -40,6 +42,7 @@ type ProposalKind =
   | 'pendingMutations'
   | 'pendingFlowChanges'
   | 'pendingSchemaChanges'
+  | 'pendingFormChanges'
   | 'pendingListMemberships'
   | 'pendingSkillChanges'
   | 'pendingBulkJobs';
@@ -274,6 +277,33 @@ export function useApprovals(options: {
       continueBusinessRequest('pendingSchemaChanges', proposal.id, activity);
     }
   });
+  const forms = useApprovalQueue<
+    PreparedFormChange,
+    FormChangeResult,
+    StoredFormChangeApprovalState
+  >({
+    name: 'execute_dataverse_form_change',
+    blocked: options.blocked || options.allowDataverseWrites === false,
+    initial: () => ({ status: 'pending' }),
+    request: (change) => ({ type: 'EXECUTE_DATAVERSE_FORM_CHANGE', payload: { change } }),
+    isComplete: (result) => result.status === 'saved' || result.status === 'published',
+    successActivity: (result) => ({
+      label:
+        result.status === 'published'
+          ? 'Published approved table customizations'
+          : result.status === 'saved'
+            ? 'Saved approved form change'
+            : 'Form change incomplete — inspect step outcomes',
+      summary: `${result.formName ?? result.tableLogicalName} · ${result.message}`,
+      details: JSON.stringify(result)
+    }),
+    failureLabel: 'Approved form change failed',
+    isHistorical: isHistorical('pendingFormChanges'),
+    activity: activity('pendingFormChanges'),
+    afterSuccess: (proposal, _result, activity) => {
+      continueBusinessRequest('pendingFormChanges', proposal.id, activity);
+    }
+  });
   const memberships = useApprovalQueue<
     PreparedMarketingListMembership,
     MarketingListMembershipExecutionResult,
@@ -409,6 +439,8 @@ export function useApprovals(options: {
     setFlowChangeApprovals: flows.setStates,
     schemaChangeApprovals: schema.states,
     setSchemaChangeApprovals: schema.setStates,
+    formChangeApprovals: forms.states,
+    setFormChangeApprovals: forms.setStates,
     listMembershipApprovals: memberships.states,
     setListMembershipApprovals: memberships.setStates,
     skillChangeApprovals: skills.states,
@@ -417,6 +449,7 @@ export function useApprovals(options: {
       ...Object.values(mutations.states),
       ...Object.values(flows.states),
       ...Object.values(schema.states),
+      ...Object.values(forms.states),
       ...Object.values(memberships.states),
       ...Object.values(skills.states),
       ...Object.values(bulk.states)
@@ -425,6 +458,7 @@ export function useApprovals(options: {
       mutations.register(response.pendingMutations);
       flows.register(response.pendingFlowChanges);
       schema.register(response.pendingSchemaChanges);
+      forms.register(response.pendingFormChanges);
       memberships.register(response.pendingListMemberships);
       skills.register(response.pendingSkillChanges);
       bulk.register(response.pendingBulkJobs);
@@ -435,6 +469,8 @@ export function useApprovals(options: {
     rejectFlowChange: flows.reject,
     approveSchemaChange: schema.approve,
     rejectSchemaChange: schema.reject,
+    approveFormChange: forms.approve,
+    rejectFormChange: forms.reject,
     approveListMembership: memberships.approve,
     rejectListMembership: memberships.reject,
     approveSkillChange: skills.approve,

@@ -23,6 +23,7 @@ Oddy is a Chrome Manifest V3 side-panel assistant for Dataverse data and Power A
 - Executes native FetchXML reads and preserves complete native FetchXML/grid layouts for `AI Result` views, including nested filters, IN lists, joins, aliases, and aggregates
 - Resolves table and column display names to logical metadata at runtime, including valid target tables for lookup columns
 - Prepares approval-gated custom table/column creation, safe schema edits, and separately approved table-scoped publishing in an unmanaged solution
+- Reads model-driven form layouts and prepares approval-gated field, section, and tab edits on main and quick create forms
 - Composes multi-step workflows such as finding a named contact, discovering its invoice relationship, creating `AI Result`, navigating to it, and opening its first sorted record
 - Can navigate the active tab to a general list, personal/system view, or specific record
 - Keeps one shared side panel per browser window so chats survive tab switches, including opening Power Automate; Dataverse tools remain restricted to active Dataverse pages
@@ -182,9 +183,19 @@ Saving does not call publish. New metadata may nevertheless be immediately avail
 
 Validate these operations in a development tenant before production use. Automated tests verify transport contracts and approval boundaries, not tenant-side metadata behavior. See Microsoft's [table metadata](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-entity-definitions-using-web-api), [column metadata](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-column-definitions-using-web-api), [lookup relationships](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-entity-relationships-using-web-api), [date-time behavior](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/behavior-format-date-time-attribute), and [RetrieveEntity](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveentity) documentation.
 
-## Forms (read-only)
+## Forms
 
-Oddy can list a table's main, quick create, quick view, and card forms and read a form's layout: tabs, sections, fields, sub-grids, header fields, script libraries, event handlers, and custom controls. It reads the latest saved version, including unpublished edits, when Dataverse allows. For example: “What's on the main Contact form?” or “Which tab holds the email field?” Oddy cannot create or edit forms yet. Form-level read-only or hidden fields are presentation only, not security.
+Oddy can list a table's main, quick create, quick view, and card forms and read a form's layout: tabs, sections, fields, sub-grids, header fields, script libraries, event handlers, and custom controls. It reads the latest saved version, including unpublished edits. For example: “What's on the main Contact form?” or “Which tab holds the email field?”
+
+Oddy can also prepare **approval-gated edits** to main and quick create forms in an unmanaged solution you choose: add, move, remove, relabel, hide, or make read-only fields in the form body, and add or change sections and tabs. For example: “Add the consent fields to a new Consents tab on the ConsentOutbox main form in solution Consent.” The approval card lists every edit and shows the layout after the change with new, moved, and changed fields marked, plus the layout before.
+
+- Columns must already exist; create them with the schema tools first.
+- Removing a field removes it from the form only, never the column or its data. Fields with OnChange script handlers cannot be removed.
+- Header fields, sub-grids, scripts, business rules, custom controls, and new forms are not editable; use the form designer.
+- Approval re-reads the form and refuses to save if anyone changed it since the preview. That check and the save are not atomic.
+- Approval adds the form to the selected solution, then saves it. Saving does **not** publish. Publishing is a separate, explicitly requested approval that publishes **all pending customizations for that table**, by any maker.
+- Editing a managed form creates an unmanaged customization layer on top of it.
+- Form-level read-only or hidden is presentation only, not security.
 
 ## Bulk workflows
 

@@ -8,6 +8,7 @@ import { createDataset } from '../lib/bulk/datasets';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
 import { executeSchemaPrimitiveInActiveTab } from '../lib/browser/schema';
+import { executeFormPrimitiveInActiveTab } from '../lib/browser/forms';
 import { navigateDataverse } from '../lib/browser/navigation';
 import { openDataverseFlowDesigner } from '../lib/browser/flow-navigation';
 import { refreshAfterMutation } from '../lib/browser/refresh';
@@ -203,6 +204,27 @@ async function handleMessage(message: ExtensionMessage): Promise<MessageResult<u
       if (!result.schemaChangeResult)
         throw new Error(result.error || 'Dataverse did not apply the approved schema change.');
       return { ok: true, data: result.schemaChangeResult };
+    }
+
+    case 'EXECUTE_DATAVERSE_FORM_CHANGE': {
+      const context = await getActiveDataverseContext({ includeUserSettings: false });
+      if (
+        !context.isDataverse ||
+        !context.origin ||
+        context.origin !== message.payload.change.environmentOrigin
+      )
+        throw new Error(
+          'Return to the Dataverse environment where this form preview was prepared.'
+        );
+      const result = await executeFormPrimitiveInActiveTab(context, {
+        action: 'execute_form_change',
+        origin: context.origin,
+        change: message.payload.change
+      });
+      // Failed/partial executions carry step outcomes for UI/audit.
+      if (!result.formChangeResult)
+        throw new Error(result.error || 'Dataverse did not apply the approved form change.');
+      return { ok: true, data: result.formChangeResult };
     }
 
     case 'EXECUTE_DATAVERSE_FLOW_CHANGE': {

@@ -151,3 +151,54 @@ export const formListRows = [
     formactivationstate: 0
   }
 ];
+
+export const formSolutionRow = {
+  solutionid: '9a0b5f43-0000-0000-0000-000000000001',
+  uniquename: 'ConsentSolution',
+  friendlyname: 'Consent Solution',
+  ismanaged: false
+};
+
+const attribute = (
+  LogicalName: string,
+  AttributeType: string,
+  label: string,
+  extra: Record<string, unknown> = {}
+) => ({
+  LogicalName,
+  AttributeType,
+  AttributeTypeName: { Value: `${AttributeType}Type` },
+  IsValidForForm: true,
+  IsPrimaryName: false,
+  RequiredLevel: { Value: 'None' },
+  DisplayName: {
+    LocalizedLabels: [{ Label: label, LanguageCode: 1033 }],
+    UserLocalizedLabel: { Label: label, LanguageCode: 1033 }
+  },
+  ...extra
+});
+
+export const contactAttributes = [
+  attribute('fullname', 'String', 'Full Name', {
+    IsPrimaryName: true,
+    RequiredLevel: { Value: 'ApplicationRequired' }
+  }),
+  attribute('emailaddress1', 'String', 'Email'),
+  attribute('birthdate', 'DateTime', 'Birthday'),
+  attribute('telephone1', 'String', 'Business Phone'),
+  attribute('parentcustomerid', 'Customer', 'Company Name'),
+  attribute('donotbulkemail', 'Boolean', 'Do not allow Bulk Emails'),
+  attribute('new_interests', 'Virtual', 'Interests', {
+    AttributeTypeName: { Value: 'MultiSelectPicklistType' }
+  }),
+  attribute('contactid', 'Uniqueidentifier', 'Contact'),
+  attribute('versionnumber', 'BigInt', 'Version Number', { IsValidForForm: false })
+];
+
+export const formEditPlan = {
+  operation: 'edit_form' as const,
+  solutionUniqueName: 'ConsentSolution',
+  languageCode: 1033,
+  tableLogicalName: 'contact',
+  formId: mainFormId
+};

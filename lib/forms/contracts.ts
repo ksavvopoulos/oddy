@@ -81,6 +81,112 @@ export interface FormDefinition {
   truncated?: boolean;
 }
 
+/** One layout edit. Tabs and sections are addressed by their stable `name`, fields by logical name. */
+export type FormEdit =
+  | {
+      op: 'add_field';
+      field: string;
+      tab: string;
+      section: string;
+      /** Zero-based row index inside the section; omitted appends. */
+      position?: number;
+      label?: string;
+      readOnly?: boolean;
+      showLabel?: boolean;
+    }
+  | { op: 'move_field'; field: string; tab: string; section: string; position?: number }
+  | { op: 'remove_field'; field: string }
+  | {
+      op: 'set_field';
+      field: string;
+      label?: string;
+      readOnly?: boolean;
+      visible?: boolean;
+      showLabel?: boolean;
+    }
+  | {
+      op: 'add_section';
+      tab: string;
+      name: string;
+      label: string;
+      columns: number;
+      /** Zero-based tab column; omitted uses the first. */
+      tabColumn?: number;
+      position?: number;
+      showLabel?: boolean;
+    }
+  | {
+      op: 'set_section';
+      tab: string;
+      section: string;
+      label?: string;
+      visible?: boolean;
+      showLabel?: boolean;
+    }
+  | { op: 'add_tab'; name: string; label: string; position?: number }
+  | {
+      op: 'set_tab';
+      tab: string;
+      label?: string;
+      visible?: boolean;
+      expanded?: boolean;
+      showLabel?: boolean;
+    };
+
+export type FormPlan =
+  | {
+      operation: 'edit_form';
+      solutionUniqueName: string;
+      languageCode: number;
+      tableLogicalName: string;
+      formId: string;
+      baseRevision: string;
+      edits: FormEdit[];
+    }
+  | {
+      /** PublishXml for the table: publishes ALL its pending customizations, including forms. */
+      operation: 'publish_table_forms';
+      tableLogicalName: string;
+    };
+
+export interface PreparedFormChange {
+  mode: 'form-v1';
+  id: string;
+  environmentOrigin: string;
+  plan: FormPlan;
+  tableLogicalName: string;
+  formId?: string;
+  formName?: string;
+  formType?: FormTypeName;
+  solution?: { uniqueName: string; displayName: string };
+  baseRevision?: string;
+  /** SHA-256 of the exact XML that execution must reproduce before saving. */
+  afterRevision?: string;
+  /** IDs minted for new cells/sections/tabs, replayed at execution so the XML is reproducible. */
+  generatedIds?: string[];
+  /** Human-readable list of approved edits. */
+  summary: string[];
+  before?: Pick<FormDefinition, 'tabs'>;
+  after?: Pick<FormDefinition, 'tabs'>;
+  warnings: string[];
+}
+
+export interface FormStepOutcome {
+  step: 'add_to_solution' | 'save_form' | 'publish';
+  status: 'succeeded' | 'failed' | 'unknown' | 'not-attempted';
+  message?: string;
+}
+
+export interface FormChangeResult {
+  operation: FormPlan['operation'];
+  tableLogicalName: string;
+  formId?: string;
+  formName?: string;
+  status: 'saved' | 'published' | 'partial' | 'failed';
+  message: string;
+  outcomes: FormStepOutcome[];
+}
+
 export type FormPrimitiveRequest =
   | { action: 'list_forms'; origin: string; tableLogicalName: string }
   | {
@@ -89,7 +195,9 @@ export type FormPrimitiveRequest =
       tableLogicalName: string;
       formId: string;
       languageCode?: number;
-    };
+    }
+  | { action: 'prepare_form_change'; origin: string; plan: FormPlan }
+  | { action: 'execute_form_change'; origin: string; change: PreparedFormChange };
 
 export interface FormPrimitiveResult {
   ok: boolean;
@@ -98,5 +206,7 @@ export interface FormPrimitiveResult {
   /** More forms exist than were returned. */
   moreForms?: boolean;
   formDefinition?: FormDefinition;
+  formChange?: PreparedFormChange;
+  formChangeResult?: FormChangeResult;
   error?: string;
 }

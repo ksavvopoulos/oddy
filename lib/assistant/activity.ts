@@ -73,6 +73,20 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
           : 'Dataverse form'
       };
     }
+    if (result.action === 'prepare_form_change')
+      return {
+        name: toolName,
+        label: 'Prepared form change',
+        summary: 'Awaiting explicit approval; nothing saved or published',
+        details: result.formChange?.summary.join('; ')
+      };
+    if (result.action === 'execute_form_change')
+      return {
+        name: toolName,
+        label: 'Applied approved form change',
+        summary: result.formChangeResult?.message || 'Form request completed',
+        details: JSON.stringify(result.formChangeResult)
+      };
     if (result.action === 'prepare_schema_change')
       return {
         name: toolName,

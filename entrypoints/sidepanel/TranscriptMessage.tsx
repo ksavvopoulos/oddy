@@ -10,6 +10,7 @@ import {
 import { normalizeMarkdown } from './formatting';
 import { BulkJobCards } from './BulkJobCards';
 import { SchemaChangeCards } from './SchemaChangeCards';
+import { FormChangeCards } from './FormChangeCards';
 import type { ApprovalActions } from './useApprovals';
 
 export function TranscriptMessage({
@@ -51,6 +52,7 @@ export function TranscriptMessage({
             <RecordChangeCards item={item} approvals={approvals} />
             <FlowChangeCards item={item} approvals={approvals} />
             <SchemaChangeCards item={item} approvals={approvals} />
+            <FormChangeCards item={item} approvals={approvals} />
             <ListMembershipCards item={item} approvals={approvals} />
             <SkillChangeCards item={item} approvals={approvals} />
             <BulkJobCards item={item} approvals={approvals} />

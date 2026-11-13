@@ -1,6 +1,7 @@
 import type { BulkDatasetRecord, BulkExecutionOptions, BulkJobSummary } from './bulk/contracts';
 import type { PreparedDataverseFlowChange } from './flows/contracts';
 import type { PreparedSchemaChange } from './schema/contracts';
+import type { PreparedFormChange } from './forms/contracts';
 
 export interface AzureOpenAISettings {
   endpoint: string;
@@ -193,6 +194,7 @@ export type OddySkillToolName =
   | 'prepare_dataverse_schema_change'
   | 'list_dataverse_forms'
   | 'get_dataverse_form_definition'
+  | 'prepare_dataverse_form_change'
   | 'resolve_dataverse_schema'
   | 'query_dataverse_records'
   | 'discover_dataverse_relationships'
@@ -289,6 +291,7 @@ export interface LlmResponse {
   pendingMutations?: PreparedDataverseMutation[];
   pendingFlowChanges?: PreparedDataverseFlowChange[];
   pendingSchemaChanges?: PreparedSchemaChange[];
+  pendingFormChanges?: PreparedFormChange[];
   pendingListMemberships?: PreparedMarketingListMembership[];
   pendingSkillChanges?: PreparedOddySkillChange[];
   pendingBulkJobs?: BulkJobSummary[];
@@ -329,6 +332,10 @@ export type ExtensionMessage =
   | {
       type: 'EXECUTE_DATAVERSE_SCHEMA_CHANGE';
       payload: { change: PreparedSchemaChange };
+    }
+  | {
+      type: 'EXECUTE_DATAVERSE_FORM_CHANGE';
+      payload: { change: PreparedFormChange };
     }
   | {
       type: 'EXECUTE_DATAVERSE_FLOW_CHANGE';

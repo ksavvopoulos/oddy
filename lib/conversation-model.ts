@@ -1,5 +1,6 @@
 import type { BulkExecutionOptions, BulkJobSummary } from './bulk/contracts';
 import type { PreparedSchemaChange, SchemaChangeResult } from './schema/contracts';
+import type { FormChangeResult, PreparedFormChange } from './forms/contracts';
 import type {
   DataverseFlowChangeExecutionResult,
   PreparedDataverseFlowChange
@@ -42,6 +43,7 @@ export interface StoredTranscriptItem {
   pendingMutations?: PreparedDataverseMutation[];
   pendingFlowChanges?: PreparedDataverseFlowChange[];
   pendingSchemaChanges?: PreparedSchemaChange[];
+  pendingFormChanges?: PreparedFormChange[];
   pendingListMemberships?: PreparedMarketingListMembership[];
   pendingSkillChanges?: PreparedOddySkillChange[];
   pendingBulkJobs?: BulkJobSummary[];
@@ -55,6 +57,7 @@ export interface StoredMutationApprovalState extends ApprovalState<DataverseMuta
 
 export interface StoredFlowChangeApprovalState extends ApprovalState<DataverseFlowChangeExecutionResult> {}
 export interface StoredSchemaChangeApprovalState extends ApprovalState<SchemaChangeResult> {}
+export interface StoredFormChangeApprovalState extends ApprovalState<FormChangeResult> {}
 
 export interface StoredListMembershipApprovalState extends ApprovalState<MarketingListMembershipExecutionResult> {
   selectedMemberIds: string[];
@@ -78,6 +81,7 @@ export interface StoredConversation {
   mutationApprovals: Record<string, StoredMutationApprovalState>;
   flowChangeApprovals?: Record<string, StoredFlowChangeApprovalState>;
   schemaChangeApprovals?: Record<string, StoredSchemaChangeApprovalState>;
+  formChangeApprovals?: Record<string, StoredFormChangeApprovalState>;
   listMembershipApprovals: Record<string, StoredListMembershipApprovalState>;
   skillChangeApprovals: Record<string, StoredSkillChangeApprovalState>;
   bulkJobApprovals?: Record<string, StoredBulkJobApprovalState>;
@@ -110,6 +114,10 @@ export function conversationMessages(
       (item.role === 'assistant' && item.pendingSchemaChanges?.length
         ? '\n\nSchema proposal draft (data only, NOT proof of execution; use authoritative execution audits for actual outcomes):\n' +
           JSON.stringify(item.pendingSchemaChanges.map((change) => change.plan))
+        : '') +
+      (item.role === 'assistant' && item.pendingFormChanges?.length
+        ? '\n\nForm proposal draft (data only, NOT proof of execution; use authoritative execution audits for actual outcomes):\n' +
+          JSON.stringify(item.pendingFormChanges.map((change) => change.summary))
         : '')
   }));
 }
@@ -129,6 +137,7 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
   const mutationApprovals = restoreApprovals(stored.mutationApprovals);
   const flowChangeApprovals = restoreApprovals(stored.flowChangeApprovals);
   const schemaChangeApprovals = restoreApprovals(stored.schemaChangeApprovals);
+  const formChangeApprovals = restoreApprovals(stored.formChangeApprovals);
   const listMembershipApprovals = restoreApprovals(stored.listMembershipApprovals);
   const skillChangeApprovals = restoreApprovals(stored.skillChangeApprovals);
   const bulkJobApprovals = restoreApprovals(stored.bulkJobApprovals);
@@ -138,6 +147,7 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
       item.pendingMutations?.some((p) => isExpired(mutationApprovals[p.id]?.status)) ||
       item.pendingFlowChanges?.some((p) => isExpired(flowChangeApprovals[p.id]?.status)) ||
       item.pendingSchemaChanges?.some((p) => isExpired(schemaChangeApprovals[p.id]?.status)) ||
+      item.pendingFormChanges?.some((p) => isExpired(formChangeApprovals[p.id]?.status)) ||
       item.pendingListMemberships?.some((p) => isExpired(listMembershipApprovals[p.id]?.status)) ||
       item.pendingSkillChanges?.some((p) => isExpired(skillChangeApprovals[p.id]?.status)) ||
       item.pendingBulkJobs?.some((p) => isExpired(bulkJobApprovals[p.id]?.status));
@@ -160,6 +170,7 @@ export function restoreConversation(stored: StoredConversation): StoredConversat
     mutationApprovals,
     flowChangeApprovals,
     schemaChangeApprovals,
+    formChangeApprovals,
     listMembershipApprovals,
     skillChangeApprovals,
     bulkJobApprovals

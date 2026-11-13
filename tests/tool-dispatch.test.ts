@@ -62,8 +62,17 @@ describe('assistant tool dispatch', () => {
       context,
       expect.objectContaining({ languageCode: 1032 })
     );
+    const plan = { operation: 'publish_table_forms', tableLogicalName: 'contact' };
+    await executeAssistantTool(context, 'prepare_dataverse_form_change', JSON.stringify({ plan }));
+    expect(executeFormPrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'prepare_form_change',
+      origin: context.origin,
+      plan
+    });
     vi.mocked(executeFormPrimitiveInActiveTab).mockClear();
     for (const [tool, args] of [
+      ['prepare_dataverse_form_change', { plan, execute: true }],
+      ['execute_dataverse_form_change', { plan }],
       ['list_dataverse_forms', { tableLogicalName: 'contact', formxml: '<form/>' }],
       [
         'get_dataverse_form_definition',

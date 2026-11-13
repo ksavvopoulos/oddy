@@ -4,6 +4,7 @@ import { executeFlowPrimitiveInActiveTab } from '../browser/flows';
 import { executeSchemaPrimitiveInActiveTab } from '../browser/schema';
 import { executeFormPrimitiveInActiveTab } from '../browser/forms';
 import type { SchemaPlan } from '../schema/contracts';
+import type { FormPlan } from '../forms/contracts';
 import { activeBulkEngine } from '../browser/bulk';
 import { parseBulkPlan } from '../bulk/plan';
 import { bulkRepository } from '../bulk/repository';
@@ -180,6 +181,16 @@ export async function executeAssistantTool(
       action: 'prepare_schema_change',
       origin: context.origin,
       plan: args.plan as SchemaPlan
+    });
+  }
+
+  if (toolName === 'prepare_dataverse_form_change') {
+    if (Object.keys(args).some((key) => key !== 'plan'))
+      return { ok: false, error: 'Unsupported form tool argument.' };
+    return executeFormPrimitiveInActiveTab(context, {
+      action: 'prepare_form_change',
+      origin: context.origin,
+      plan: args.plan as FormPlan
     });
   }
 
