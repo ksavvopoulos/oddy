@@ -1,6 +1,7 @@
 import type { AzureToolDefinition } from '../azure-openai';
 import { bulkToolDefinitions } from '../bulk/tool-catalog';
 import { SCHEMA_TOOLS, SCHEMA_TOOL_OPTIONS } from '../schema/tool-catalog';
+import { FORM_TOOLS, FORM_TOOL_OPTIONS } from '../forms/tool-catalog';
 import type { OddySkillToolName } from '../types';
 
 export const SKILL_TOOL_OPTIONS: Array<{
@@ -9,6 +10,7 @@ export const SKILL_TOOL_OPTIONS: Array<{
   description: string;
 }> = [
   ...SCHEMA_TOOL_OPTIONS,
+  ...FORM_TOOL_OPTIONS,
   {
     name: 'resolve_dataverse_schema',
     label: 'Resolve schema',
@@ -151,6 +153,7 @@ const QUERY_CURSOR_SCHEMA = {
 
 export const DATAVERSE_TOOLS: AzureToolDefinition[] = [
   ...SCHEMA_TOOLS,
+  ...FORM_TOOLS,
   {
     type: 'function',
     function: {

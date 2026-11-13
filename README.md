@@ -182,6 +182,10 @@ Saving does not call publish. New metadata may nevertheless be immediately avail
 
 Validate these operations in a development tenant before production use. Automated tests verify transport contracts and approval boundaries, not tenant-side metadata behavior. See Microsoft's [table metadata](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-entity-definitions-using-web-api), [column metadata](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-column-definitions-using-web-api), [lookup relationships](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-entity-relationships-using-web-api), [date-time behavior](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/behavior-format-date-time-attribute), and [RetrieveEntity](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveentity) documentation.
 
+## Forms (read-only)
+
+Oddy can list a table's main, quick create, quick view, and card forms and read a form's layout: tabs, sections, fields, sub-grids, header fields, script libraries, event handlers, and custom controls. It reads the latest saved version, including unpublished edits, when Dataverse allows. For example: “What's on the main Contact form?” or “Which tab holds the email field?” Oddy cannot create or edit forms yet. Form-level read-only or hidden fields are presentation only, not security.
+
 ## Bulk workflows
 
 Example requests:

@@ -2,6 +2,7 @@ import type { DataversePrimitiveRequest } from '../dataverse-primitives';
 import { executePrimitiveInActiveTab } from '../browser/primitives';
 import { executeFlowPrimitiveInActiveTab } from '../browser/flows';
 import { executeSchemaPrimitiveInActiveTab } from '../browser/schema';
+import { executeFormPrimitiveInActiveTab } from '../browser/forms';
 import type { SchemaPlan } from '../schema/contracts';
 import { activeBulkEngine } from '../browser/bulk';
 import { parseBulkPlan } from '../bulk/plan';
@@ -179,6 +180,31 @@ export async function executeAssistantTool(
       action: 'prepare_schema_change',
       origin: context.origin,
       plan: args.plan as SchemaPlan
+    });
+  }
+
+  if (toolName === 'list_dataverse_forms' || toolName === 'get_dataverse_form_definition') {
+    const allowed =
+      toolName === 'list_dataverse_forms'
+        ? ['tableLogicalName']
+        : ['tableLogicalName', 'formId', 'languageCode'];
+    if (Object.keys(args).some((key) => !allowed.includes(key)))
+      return { ok: false, error: 'Unsupported form tool argument.' };
+    const tableLogicalName = typeof args.tableLogicalName === 'string' ? args.tableLogicalName : '';
+    if (toolName === 'list_dataverse_forms')
+      return executeFormPrimitiveInActiveTab(context, {
+        action: 'list_forms',
+        origin: context.origin,
+        tableLogicalName
+      });
+    if (args.languageCode != null && !Number.isInteger(args.languageCode))
+      return { ok: false, error: 'Invalid language LCID.' };
+    return executeFormPrimitiveInActiveTab(context, {
+      action: 'get_form_definition',
+      origin: context.origin,
+      tableLogicalName,
+      formId: typeof args.formId === 'string' ? args.formId : '',
+      ...(typeof args.languageCode === 'number' ? { languageCode: args.languageCode } : {})
     });
   }
 

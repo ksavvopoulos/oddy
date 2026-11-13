@@ -3,6 +3,7 @@ import { executeAssistantTool } from '../lib/assistant/execute-tool';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
 import { executeSchemaPrimitiveInActiveTab } from '../lib/browser/schema';
+import { executeFormPrimitiveInActiveTab } from '../lib/browser/forms';
 import { createSchemaTablePlan } from './fixtures/schema';
 import { openDataverseFlowDesigner } from '../lib/browser/flow-navigation';
 import {
@@ -16,6 +17,7 @@ import { recordProposal } from './fixtures/proposals';
 vi.mock('../lib/browser/primitives', () => ({ executePrimitiveInActiveTab: vi.fn() }));
 vi.mock('../lib/browser/flows', () => ({ executeFlowPrimitiveInActiveTab: vi.fn() }));
 vi.mock('../lib/browser/schema', () => ({ executeSchemaPrimitiveInActiveTab: vi.fn() }));
+vi.mock('../lib/browser/forms', () => ({ executeFormPrimitiveInActiveTab: vi.fn() }));
 vi.mock('../lib/browser/flow-navigation', () => ({ openDataverseFlowDesigner: vi.fn() }));
 afterEach(() => {
   vi.resetAllMocks();
@@ -29,6 +31,50 @@ const context = {
 };
 
 describe('assistant tool dispatch', () => {
+  it('routes read-only form tools with strict arguments', async () => {
+    await executeAssistantTool(
+      context,
+      'list_dataverse_forms',
+      JSON.stringify({ tableLogicalName: 'contact' })
+    );
+    expect(executeFormPrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'list_forms',
+      origin: context.origin,
+      tableLogicalName: 'contact'
+    });
+    await executeAssistantTool(
+      context,
+      'get_dataverse_form_definition',
+      JSON.stringify({ tableLogicalName: 'contact', formId: 'abc', languageCode: null })
+    );
+    expect(executeFormPrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'get_form_definition',
+      origin: context.origin,
+      tableLogicalName: 'contact',
+      formId: 'abc'
+    });
+    await executeAssistantTool(
+      context,
+      'get_dataverse_form_definition',
+      JSON.stringify({ tableLogicalName: 'contact', formId: 'abc', languageCode: 1032 })
+    );
+    expect(executeFormPrimitiveInActiveTab).toHaveBeenLastCalledWith(
+      context,
+      expect.objectContaining({ languageCode: 1032 })
+    );
+    vi.mocked(executeFormPrimitiveInActiveTab).mockClear();
+    for (const [tool, args] of [
+      ['list_dataverse_forms', { tableLogicalName: 'contact', formxml: '<form/>' }],
+      [
+        'get_dataverse_form_definition',
+        { tableLogicalName: 'contact', formId: 'abc', languageCode: 1.5 }
+      ],
+      ['update_dataverse_form', { formId: 'abc' }]
+    ] as const)
+      expect((await executeAssistantTool(context, tool, JSON.stringify(args))).ok).toBe(false);
+    expect(executeFormPrimitiveInActiveTab).not.toHaveBeenCalled();
+  });
+
   it('routes schema discovery and preparation but never exposes execution', async () => {
     await executeAssistantTool(
       context,

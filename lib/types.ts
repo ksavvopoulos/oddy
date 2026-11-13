@@ -191,6 +191,8 @@ export type OddySkillToolName =
   | 'list_dataverse_solutions'
   | 'get_dataverse_table_definition'
   | 'prepare_dataverse_schema_change'
+  | 'list_dataverse_forms'
+  | 'get_dataverse_form_definition'
   | 'resolve_dataverse_schema'
   | 'query_dataverse_records'
   | 'discover_dataverse_relationships'

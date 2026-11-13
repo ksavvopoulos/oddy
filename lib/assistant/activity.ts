@@ -52,6 +52,27 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
         label: 'Read latest table definition',
         summary: result.tableDefinition?.logicalName || 'Dataverse metadata'
       };
+    if (result.action === 'list_forms')
+      return {
+        name: toolName,
+        label: 'Listed table forms',
+        summary: `${result.forms?.length || 0} form${result.forms?.length === 1 ? '' : 's'}${result.moreForms ? ' · more not shown' : ''}`,
+        details: result.forms?.map((form) => `${form.name} (${form.type})`).join('; ')
+      };
+    if (result.action === 'get_form_definition') {
+      const form = result.formDefinition;
+      const fields = form?.tabs
+        .flatMap((tab) => tab.sections)
+        .flatMap((section) => section.controls)
+        .filter((control) => control.kind === 'field').length;
+      return {
+        name: toolName,
+        label: 'Read form layout',
+        summary: form
+          ? `${form.name} · ${form.tabs.length} tab${form.tabs.length === 1 ? '' : 's'} · ${fields} field${fields === 1 ? '' : 's'}${form.source === 'published' ? ' · published version' : ''}`
+          : 'Dataverse form'
+      };
+    }
     if (result.action === 'prepare_schema_change')
       return {
         name: toolName,

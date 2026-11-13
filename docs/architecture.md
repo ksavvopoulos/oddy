@@ -92,6 +92,14 @@ PublishXml is a separate approval scoped to one validated logical table name. It
 
 Limits: 128,000-character plans, 4 MiB streamed responses, 30-second requests, 100 Choice labels, 20 additional columns. The transport constructs every URL/header/method internally, refuses redirects, and never accepts model-provided requests or XML. Tests: `dataverse-schema.test.ts`, `schema-complete-table.test.ts`, `schema-browser.test.ts`, `schema-background.test.ts`, `schema-ui.test.tsx`, `tool-availability.test.ts`, plus shared context/catalog/dispatch/orchestration tests.
 
+## Form primitives (read-only)
+
+Forms are a separate read-only domain: `lib/forms/contracts.ts`, `lib/forms/tool-catalog.ts`, the self-contained `lib/dataverse-form-primitives.ts`, and `lib/browser/forms.ts`. The catalog exposes `list_dataverse_forms` and `get_dataverse_form_definition`; there is no form write path yet.
+
+Listing filters `systemforms` by table (`objecttypecode`) and by main (2), quick view (6), quick create (7), and card (11) types. Dashboards and legacy types are excluded. Reading calls the bound `RetrieveUnpublished` function so pending edits by any maker are visible; only a definite 400/404/501 falls back to the published row, and the result says which source was used. Other errors are not retried. The form must belong to the requested table.
+
+The injected executor parses `formxml` with the page's `DOMParser` and returns a bounded projection (600 controls): tabs → sections (with tab column and field-column count) → controls (field, sub-grid, quick view, web resource, iframe, timeline, spacer, other), plus header/footer controls, script libraries, events with customer handler counts, and the number of custom (PCF) control descriptions. Labels use the requested LCID or the first label. Visibility and `disabled` are form presentation, not security. A SHA-256 of the exact XML is returned as a snapshot revision for future stale-edit checks. Control kinds are identified by well-known `classid` values; the fixture is hand-written and should be replaced by exported tenant forms.
+
 ## Cloud-flow primitives
 
 Modern cloud flows are read and written through the signed-in Dataverse `workflows` endpoint. `lib/dataverse-flow-primitives.ts` is a separate self-contained MAIN-world executor because native-definition and workflow-table validation are a distinct domain from generic record mutation.
