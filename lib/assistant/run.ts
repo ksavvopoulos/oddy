@@ -20,11 +20,13 @@ import type {
 } from '../types';
 import type { BulkJobSummary } from '../bulk/contracts';
 import type { PreparedDataverseFlowChange } from '../flows/contracts';
+import type { PreparedSchemaChange } from '../schema/contracts';
 import { selectAssistantTools } from './tool-catalog';
 import type { AssistantToolResult } from './contracts';
 import { executeAssistantTool } from './execute-tool';
 import { activityForTool } from './activity';
 import { withRuntimeClock } from './runtime-clock';
+import { withToolAvailability } from './tool-availability';
 
 export async function runDataverseAssistant(
   settings: AzureOpenAISettings,
@@ -36,7 +38,14 @@ export async function runDataverseAssistant(
   limits: { expectedOrigin?: string; skillToolLimit?: OddySkillToolName[] } = {}
 ): Promise<LlmResponse> {
   if (!allowDataverseTools && !allowSkillTools) {
-    return callAzureOpenAI(settings, withRuntimeClock(inputMessages));
+    return callAzureOpenAI(
+      settings,
+      withToolAvailability(
+        withRuntimeClock(inputMessages),
+        [],
+        'Dataverse and custom-skill tools were not enabled for this request.'
+      )
+    );
   }
 
   const context = await getActiveDataverseContext({ includeUserSettings: allowDataverseTools });
@@ -54,9 +63,32 @@ export async function runDataverseAssistant(
     if (skillExecution) {
       throw new Error('Return to an active Dataverse page before running this skill.');
     }
-    return callAzureOpenAI(settings, inputMessages);
+    return callAzureOpenAI(
+      settings,
+      withToolAvailability(
+        inputMessages,
+        [],
+        'The active page is not a verified Dataverse environment. Return to a Dataverse tab and enable Dataverse tools.'
+      )
+    );
   }
 
+  const activeTools = selectAssistantTools({
+    allowDataverseTools,
+    allowSkillTools,
+    skillTools: skillExecution?.skill.allowedTools.filter(
+      (tool) => !limits.skillToolLimit || limits.skillToolLimit.includes(tool)
+    )
+  });
+  inputMessages = withToolAvailability(
+    inputMessages,
+    activeTools.map((tool) => tool.function.name),
+    !allowDataverseTools
+      ? 'Dataverse tools were not enabled for this request; only the listed local tools are available.'
+      : skillExecution
+        ? 'Skill execution is restricted to its declared tool allowlist.'
+        : undefined
+  );
   const conversation: AzureChatMessage[] = inputMessages.map((message) => ({
     role: message.role,
     content: message.content
@@ -77,6 +109,7 @@ export async function runDataverseAssistant(
       `For opening the first/newest/oldest view result: execute the view with pageSize 1, then navigate to its returned record ID; for a native record query use explicit order and top 1. ` +
       `For an unfiltered list: resolve the table and navigate to its logical name. ` +
       `For cloud flows: use list_dataverse_flows with structured filters, ordering, pageSize and cursor. To find flows triggered by a table/event, resolve its logical name and use trigger.table/event, not a flow-name or action-text substring search. For enabled trigger questions use published definition scope and activated runtime state; for finding/editing saved drafts use latest scope. Continue nextCursor even when a matching page is empty. Aggregate all pages; disclose unreadable/unsupported candidates or incomplete scans and never claim exhaustive absence from a partial page. Trigger configuration is not proof of an actual run; run history is not available. List flows to identify the exact workflow, read it before editing, and list existing connection references before creating. When the user asks to show or open a flow in Power Automate, use open_dataverse_flow_designer with the exact workflow ID instead of giving manual instructions or a link. Use complete native Power Automate definitions for both creation and editing; no typed spec or ownership marker is required. New flows are created Off in the default solution. Any unmanaged flow with a readable definition can be edited after approval, regardless of creator. For existing flows submit a complete definition based on get_dataverse_flow and its exact ETag, preserving all unrelated fields, nested actions, expressions, designer metadata, and connection references. For creates pass null workflowId and etag. Use action entity-set names and trigger logical table names from metadata; never guess plural names. Never invent connection references or credentials. Flow creates and edits require explicit approval. Flow updates save an unpublished draft only, never publish or activate it; explain that publishing is a separate Power Automate step and do not claim that live automation changed after a draft-save audit. ` +
+      `For table/column SCHEMA changes (not records): search list_dataverse_solutions using the user’s already supplied solution display name; resolve its exact uniqueName from results and use its publisher prefix. A solutionIssues entry marks only that entry unavailable; valid matches on the same or later pages remain usable. Ask only for genuinely ambiguous matches, never repeatedly ask for an already confirmed name or ownership. For a new table, put ALL requested columns and single-target lookups in create_table.columns for ONE complete approval preview. UserLocal datetime stores a UTC instant displayed in the viewer’s local time; TimeZoneIndependent is a wall time, not an interchangeable instant. Explicitly confirm lookup delete behavior (Restrict/RemoveLink). Local Choice defaultChoice sets a form default only; API event producers must explicitly write Pending. Do not create built-in statuscode/statecode to represent a processing status; use a new custom Choice. If a complete plan partially fails, use per-component outcomes and inspect actual metadata before a NEW preview; never blindly recreate the table or repeat succeeded requests. Creating an outbox table does not implement event capture, dispatch, retries, or security-role grants. Read get_dataverse_table_definition before editing existing schema and pass the exact revision. Use prepare_dataverse_schema_change; never claim it was applied without an execution audit. Re-read after each approved schema write. Only standard unmanaged custom tables and supported custom columns are editable. Creation does not add forms/views/app membership or grant record access. Metadata saves and table publishing are separate approvals; only prepare publish_table when the user explicitly requested publishing. Publishing applies ALL pending customizations for that table, including other makers' changes and forms/views; disclose this scope. Never publish all. New metadata can be immediately available even without a publish call. No destructive schema operations are supported. ` +
       `For a business-record update: query and uniquely identify the record, then prepare a field-level change proposal. ` +
       `For a new business record: prepare a create proposal with all known field values. Choice labels may be passed directly and are resolved to numeric options from Dataverse metadata. For lookup fields, resolve the column targets, query the exact target record, and pass its table and record ID in the lookup value. ` +
       `For all matching records, many records, or potentially thousands: use prepare_bulk_job with the complete selection query; never enumerate ordinary query pages for bulk writes or put thousands of IDs into the conversation. Bulk selection retains its separate validated structured plan; native record reads do not replace the bulk approval pipeline. Bulk jobs support constant updates, related-record counts, uploaded-dataset creates, and static marketing-list membership. Resolve the exact list first; never recreate an existing list. Explicit small ID selections may use prepare_marketing_list_membership. ` +
@@ -102,13 +135,6 @@ export async function runDataverseAssistant(
     });
   }
 
-  const activeTools = selectAssistantTools({
-    allowDataverseTools,
-    allowSkillTools,
-    skillTools: skillExecution?.skill.allowedTools.filter(
-      (tool) => !limits.skillToolLimit || limits.skillToolLimit.includes(tool)
-    )
-  });
   const allowedToolNames = new Set(activeTools.map((tool) => tool.function.name));
   if (activeTools.length === 0) {
     throw new Error('The selected Oddy skill has no supported tools enabled.');
@@ -145,6 +171,7 @@ export async function runDataverseAssistant(
     : [];
   const pendingMutations: PreparedDataverseMutation[] = [];
   const pendingFlowChanges: PreparedDataverseFlowChange[] = [];
+  const pendingSchemaChanges: PreparedSchemaChange[] = [];
   const pendingListMemberships: PreparedMarketingListMembership[] = [];
   const pendingSkillChanges: PreparedOddySkillChange[] = [];
   const pendingBulkJobs: BulkJobSummary[] = [];
@@ -162,6 +189,7 @@ export async function runDataverseAssistant(
         toolsUsed: toolsUsed.length ? toolsUsed : undefined,
         pendingMutations: pendingMutations.length ? pendingMutations : undefined,
         pendingFlowChanges: pendingFlowChanges.length ? pendingFlowChanges : undefined,
+        pendingSchemaChanges: pendingSchemaChanges.length ? pendingSchemaChanges : undefined,
         pendingListMemberships: pendingListMemberships.length ? pendingListMemberships : undefined,
         pendingSkillChanges: pendingSkillChanges.length ? pendingSkillChanges : undefined,
         pendingBulkJobs: pendingBulkJobs.length ? pendingBulkJobs : undefined
@@ -206,6 +234,8 @@ export async function runDataverseAssistant(
       ) {
         pendingSkillChanges.push(result.change);
       }
+      if (result.ok && 'schemaChange' in result && result.schemaChange)
+        pendingSchemaChanges.push(result.schemaChange);
       toolsUsed.push(activityForTool(toolCall.name, result));
       if (
         result.ok &&
@@ -222,21 +252,34 @@ export async function runDataverseAssistant(
         output: JSON.stringify(
           result.ok && 'job' in result && result.job
             ? { ...result, job: { ...result.job, sample: [] } }
-            : result.ok && 'flowChange' in result && result.flowChange
+            : result.ok && 'schemaChange' in result && result.schemaChange
               ? {
-                  ...result,
-                  flowChange: {
-                    id: result.flowChange.id,
-                    mode: result.flowChange.mode,
-                    operation: result.flowChange.operation,
-                    workflowId: result.flowChange.workflowId,
-                    before: result.flowChange.before,
-                    after: result.flowChange.after,
-                    saveMode: result.flowChange.saveMode,
-                    warnings: result.flowChange.warnings
+                  ok: true,
+                  action: result.action,
+                  schemaChange: {
+                    id: result.schemaChange.id,
+                    plan: result.schemaChange.plan,
+                    solution: result.schemaChange.solution,
+                    tableLogicalName: result.schemaChange.tableLogicalName,
+                    columnLogicalName: result.schemaChange.columnLogicalName,
+                    warnings: result.schemaChange.warnings
                   }
                 }
-              : result
+              : result.ok && 'flowChange' in result && result.flowChange
+                ? {
+                    ...result,
+                    flowChange: {
+                      id: result.flowChange.id,
+                      mode: result.flowChange.mode,
+                      operation: result.flowChange.operation,
+                      workflowId: result.flowChange.workflowId,
+                      before: result.flowChange.before,
+                      after: result.flowChange.after,
+                      saveMode: result.flowChange.saveMode,
+                      warnings: result.flowChange.warnings
+                    }
+                  }
+                : result
         )
       });
     }

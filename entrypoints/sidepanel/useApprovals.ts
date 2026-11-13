@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { PreparedSchemaChange, SchemaChangeResult } from '../../lib/schema/contracts';
 import type { BulkExecutionOptions, BulkJobSummary } from '../../lib/bulk/contracts';
 import type {
   DataverseFlowChangeExecutionResult,
@@ -17,6 +18,7 @@ import type {
   StoredTranscriptItem,
   StoredMutationApprovalState,
   StoredFlowChangeApprovalState,
+  StoredSchemaChangeApprovalState,
   StoredListMembershipApprovalState,
   StoredSkillChangeApprovalState,
   StoredBulkJobApprovalState
@@ -37,6 +39,7 @@ import type {
 type ProposalKind =
   | 'pendingMutations'
   | 'pendingFlowChanges'
+  | 'pendingSchemaChanges'
   | 'pendingListMemberships'
   | 'pendingSkillChanges'
   | 'pendingBulkJobs';
@@ -53,6 +56,7 @@ function useApprovalQueue<
   request: (proposal: Proposal, state: State) => ExtensionMessage;
   executeRequest?: (proposal: Proposal, state: State) => Promise<Result>;
   successActivity: (result: Result) => Omit<ToolActivity, 'name'>;
+  isComplete?: (result: Result) => boolean;
   failureLabel: string;
   isHistorical: (id: string) => boolean;
   blocked: boolean;
@@ -101,13 +105,19 @@ function useApprovalQueue<
         return response.data;
       },
       success: (result) => {
+        const complete = config.isComplete?.(result) !== false;
+        const activity = { name: config.name, ...config.successActivity(result) };
         setStates((existing) => ({
           ...existing,
-          [proposal.id]: { ...state, status: 'approved', result, error: undefined }
+          [proposal.id]: {
+            ...state,
+            status: complete ? 'approved' : 'error',
+            result,
+            error: complete ? undefined : activity.summary
+          }
         }));
-        const activity = { name: config.name, ...config.successActivity(result) };
         config.activity(proposal.id, activity);
-        config.afterSuccess(proposal, result, activity);
+        if (complete) config.afterSuccess(proposal, result, activity);
       },
       failure: (error) => {
         const detail = errorMessage(error);
@@ -234,6 +244,34 @@ export function useApprovals(options: {
     activity: activity('pendingFlowChanges'),
     afterSuccess: (proposal, _result, activity) => {
       continueBusinessRequest('pendingFlowChanges', proposal.id, activity);
+    }
+  });
+  const schema = useApprovalQueue<
+    PreparedSchemaChange,
+    SchemaChangeResult,
+    StoredSchemaChangeApprovalState
+  >({
+    name: 'execute_dataverse_schema_change',
+    blocked: options.blocked || options.allowDataverseWrites === false,
+    initial: () => ({ status: 'pending' }),
+    request: (change) => ({ type: 'EXECUTE_DATAVERSE_SCHEMA_CHANGE', payload: { change } }),
+    isComplete: (result) => result.status === 'saved' || result.status === 'published',
+    successActivity: (result) => ({
+      label:
+        result.status === 'published'
+          ? 'Published approved table customizations'
+          : result.status === 'saved'
+            ? 'Saved approved schema change'
+            : 'Schema plan incomplete — inspect component outcomes',
+      summary: `${result.tableLogicalName}${result.columnLogicalName ? '.' + result.columnLogicalName : ''} · ${result.message}`,
+      details: JSON.stringify(result)
+    }),
+    failureLabel: 'Approved schema change failed',
+    isHistorical: isHistorical('pendingSchemaChanges'),
+    activity: activity('pendingSchemaChanges'),
+    afterSuccess: (proposal, _result, activity) => {
+      void options.loadContext();
+      continueBusinessRequest('pendingSchemaChanges', proposal.id, activity);
     }
   });
   const memberships = useApprovalQueue<
@@ -369,6 +407,8 @@ export function useApprovals(options: {
     setMutationApprovals: mutations.setStates,
     flowChangeApprovals: flows.states,
     setFlowChangeApprovals: flows.setStates,
+    schemaChangeApprovals: schema.states,
+    setSchemaChangeApprovals: schema.setStates,
     listMembershipApprovals: memberships.states,
     setListMembershipApprovals: memberships.setStates,
     skillChangeApprovals: skills.states,
@@ -376,6 +416,7 @@ export function useApprovals(options: {
     approving: [
       ...Object.values(mutations.states),
       ...Object.values(flows.states),
+      ...Object.values(schema.states),
       ...Object.values(memberships.states),
       ...Object.values(skills.states),
       ...Object.values(bulk.states)
@@ -383,6 +424,7 @@ export function useApprovals(options: {
     registerResponse: (response: LlmResponse) => {
       mutations.register(response.pendingMutations);
       flows.register(response.pendingFlowChanges);
+      schema.register(response.pendingSchemaChanges);
       memberships.register(response.pendingListMemberships);
       skills.register(response.pendingSkillChanges);
       bulk.register(response.pendingBulkJobs);
@@ -391,6 +433,8 @@ export function useApprovals(options: {
     rejectMutation: mutations.reject,
     approveFlowChange: flows.approve,
     rejectFlowChange: flows.reject,
+    approveSchemaChange: schema.approve,
+    rejectSchemaChange: schema.reject,
     approveListMembership: memberships.approve,
     rejectListMembership: memberships.reject,
     approveSkillChange: skills.approve,

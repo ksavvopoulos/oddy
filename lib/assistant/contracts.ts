@@ -2,6 +2,7 @@ import type { DataversePrimitiveResult } from '../dataverse-primitives';
 import type { NavigationResult } from '../browser/navigation';
 import type { FlowDesignerNavigationResult } from '../browser/flow-navigation';
 import type { DataverseFlowPrimitiveResult } from '../flows/contracts';
+import type { SchemaPrimitiveResult } from '../schema/contracts';
 import type { OddySkill, PreparedOddySkillChange } from '../types';
 import type { BulkJobSummary, BulkDatasetSummary } from '../bulk/contracts';
 
@@ -26,6 +27,7 @@ export interface OddySkillToolResult {
 export type AssistantToolResult =
   | DataversePrimitiveResult
   | DataverseFlowPrimitiveResult
+  | SchemaPrimitiveResult
   | NavigationResult
   | FlowDesignerNavigationResult
   | OddySkillToolResult

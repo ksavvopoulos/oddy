@@ -19,6 +19,7 @@ import {
 } from './fixtures/proposals';
 import { bulkSummary } from './fixtures/bulk';
 import { definitionProposal } from './fixtures/flow-definitions';
+import { schemaProposal } from './fixtures/schema';
 
 vi.mock('../lib/azure-openai', () => ({
   callAzureOpenAI: vi.fn(),
@@ -105,6 +106,96 @@ describe('assistant tool catalog', () => {
 });
 
 describe('assistant orchestration', () => {
+  it('keeps schema tools enabled after a validation failure and supplies a current capability manifest', async () => {
+    vi.mocked(callAzureOpenAIResponses)
+      .mockResolvedValueOnce({
+        id: 'prefix',
+        content: '',
+        toolCalls: [
+          {
+            type: 'function_call',
+            call_id: 'prefix',
+            name: 'list_dataverse_solutions',
+            arguments: JSON.stringify({ search: 'test table', afterUniqueName: null })
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        id: 'reply',
+        content: 'The lookup failed, not the tool availability.',
+        toolCalls: []
+      });
+    vi.mocked(executeAssistantTool).mockResolvedValue({
+      ok: false,
+      action: 'list_schema_solutions',
+      error: 'Invalid publisher prefix.'
+    });
+    await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, false);
+    const first = vi.mocked(callAzureOpenAIResponses).mock.calls[0]![1];
+    const second = vi.mocked(callAzureOpenAIResponses).mock.calls[1]![1];
+    expect(JSON.stringify(first.messages)).toContain(
+      'Extension tool availability (authoritative for THIS request)'
+    );
+    expect(JSON.stringify(first.messages)).toContain('NOT evidence that tools disappeared');
+    expect(JSON.stringify(first.messages)).toContain('ALL requested columns');
+    expect(names(second.tools || [])).toContain('prepare_dataverse_schema_change');
+    expect(JSON.stringify(second.input)).toContain('Invalid publisher prefix.');
+  });
+
+  it('collects schema approvals locally while sending only compact scope and warnings to the model', async () => {
+    vi.mocked(callAzureOpenAIResponses)
+      .mockResolvedValueOnce({
+        id: 'schema-1',
+        content: '',
+        toolCalls: [
+          {
+            type: 'function_call',
+            call_id: 'schema-call',
+            name: 'prepare_dataverse_schema_change',
+            arguments: JSON.stringify({ plan: schemaProposal.plan })
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ id: 'schema-2', content: 'Please approve.', toolCalls: [] });
+    vi.mocked(executeAssistantTool).mockResolvedValue({
+      ok: true,
+      action: 'prepare_schema_change',
+      schemaChange: schemaProposal
+    });
+    const result = await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, true, false);
+    expect(result.pendingSchemaChanges).toEqual([schemaProposal]);
+    const followup = JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[1]?.[1]);
+    expect(followup).toContain('schema-proposal');
+    expect(followup).not.toContain('OwnershipType');
+    const instruction = JSON.stringify(vi.mocked(callAzureOpenAIResponses).mock.calls[0]?.[1]);
+    expect(instruction).toContain('only prepare publish_table when the user explicitly requested');
+  });
+
+  it('refuses schema execution and schema preparation when they are not advertised', async () => {
+    vi.mocked(callAzureOpenAIResponses)
+      .mockResolvedValueOnce({
+        id: 'no-schema-1',
+        content: '',
+        toolCalls: [
+          {
+            type: 'function_call',
+            call_id: 'x',
+            name: 'execute_dataverse_schema_change',
+            arguments: '{}'
+          },
+          {
+            type: 'function_call',
+            call_id: 'y',
+            name: 'prepare_dataverse_schema_change',
+            arguments: '{}'
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ id: 'no-schema-2', content: 'No changes.', toolCalls: [] });
+    await runDataverseAssistant(DEFAULT_SETTINGS.azureOpenAI, messages, false, true);
+    expect(executeAssistantTool).not.toHaveBeenCalled();
+  });
+
   it('instructs set-based native reads, explicit paging and lossless view edits', async () => {
     vi.mocked(callAzureOpenAIResponses).mockResolvedValue({
       id: 'native',

@@ -1,6 +1,8 @@
 import type { DataversePrimitiveRequest } from '../dataverse-primitives';
 import { executePrimitiveInActiveTab } from '../browser/primitives';
 import { executeFlowPrimitiveInActiveTab } from '../browser/flows';
+import { executeSchemaPrimitiveInActiveTab } from '../browser/schema';
+import type { SchemaPlan } from '../schema/contracts';
 import { activeBulkEngine } from '../browser/bulk';
 import { parseBulkPlan } from '../bulk/plan';
 import { bulkRepository } from '../bulk/repository';
@@ -139,6 +141,45 @@ export async function executeAssistantTool(
 
   if (!context.origin) {
     return { ok: false, action: 'resolve_schema', error: 'The Dataverse origin is unavailable.' };
+  }
+
+  if (
+    toolName === 'list_dataverse_solutions' ||
+    toolName === 'get_dataverse_table_definition' ||
+    toolName === 'prepare_dataverse_schema_change'
+  ) {
+    const allowed =
+      toolName === 'list_dataverse_solutions'
+        ? ['afterUniqueName', 'search']
+        : toolName === 'get_dataverse_table_definition'
+          ? ['tableLogicalName']
+          : ['plan'];
+    if (Object.keys(args).some((key) => !allowed.includes(key)))
+      return { ok: false, error: 'Unsupported schema tool argument.' };
+    if (toolName === 'list_dataverse_solutions') {
+      if (
+        (args.afterUniqueName != null && typeof args.afterUniqueName !== 'string') ||
+        (args.search != null && typeof args.search !== 'string')
+      )
+        return { ok: false, error: 'Invalid solution continuation.' };
+      return executeSchemaPrimitiveInActiveTab(context, {
+        action: 'list_schema_solutions',
+        origin: context.origin,
+        afterUniqueName: args.afterUniqueName as string | undefined,
+        search: args.search as string | undefined
+      });
+    }
+    if (toolName === 'get_dataverse_table_definition')
+      return executeSchemaPrimitiveInActiveTab(context, {
+        action: 'get_table_definition',
+        origin: context.origin,
+        tableLogicalName: typeof args.tableLogicalName === 'string' ? args.tableLogicalName : ''
+      });
+    return executeSchemaPrimitiveInActiveTab(context, {
+      action: 'prepare_schema_change',
+      origin: context.origin,
+      plan: args.plan as SchemaPlan
+    });
   }
 
   if (toolName === 'list_dataverse_flows') {

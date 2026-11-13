@@ -22,6 +22,7 @@ Oddy is a Chrome Manifest V3 side-panel assistant for Dataverse data and Power A
 - Creates and edits native Power Automate definitions, including conditions, loops, branches, expressions, and existing connectors; new flows remain Off
 - Executes native FetchXML reads and preserves complete native FetchXML/grid layouts for `AI Result` views, including nested filters, IN lists, joins, aliases, and aggregates
 - Resolves table and column display names to logical metadata at runtime, including valid target tables for lookup columns
+- Prepares approval-gated custom table/column creation, safe schema edits, and separately approved table-scoped publishing in an unmanaged solution
 - Composes multi-step workflows such as finding a named contact, discovering its invoice relationship, creating `AI Result`, navigating to it, and opening its first sorted record
 - Can navigate the active tab to a general list, personal/system view, or specific record
 - Keeps one shared side panel per browser window so chats survive tab switches, including opening Power Automate; Dataverse tools remain restricted to active Dataverse pages
@@ -84,13 +85,13 @@ To ship a new version:
 
 ```bash
 # Start on main with the intended changes committed.
-npm version 0.13.3 --no-git-tag-version
+npm version 0.13.5 --no-git-tag-version
 npm run check
 git add package.json package-lock.json
-git commit -m "Bump version to 0.13.3"
-git tag -a v0.13.3 -m "Oddy 0.13.3"
+git commit -m "Bump version to 0.13.5"
+git tag -a v0.13.5 -m "Oddy 0.13.5"
 git push origin main
-git push origin v0.13.3
+git push origin v0.13.5
 ```
 
 For the first `v0.13.2` release, do not bump again: commit and push the automation first, then tag that commit. A tag on an older commit without the workflow will not run this automation. Use `npm run release:verify -- --tag v0.13.2 --manifest .output/chrome-mv3/manifest.json` for a local version check; add `--require-tag` to check the actual annotated tag and clean working tree too.
@@ -164,6 +165,22 @@ Paging uses `odata.maxpagesize` and Dataverse's unchanged `@odata.nextLink`, not
 Flow updates read the latest unpublished definition with `MSCRM.IncludeUnpublished: true` and save using `MSCRM.AsUnpublished: true` plus the exact captured ETag. The approval explicitly authorizes **Save cloud-flow draft**, not publication or activation. Existing published automation is not intentionally changed; publish separately in Power Automate after review. Legacy typed previews cannot execute and must be prepared again; their saved history remains readable. There is no automatic publish, activation, deletion of drafts, or fallback retry after a save failure.
 
 The draft-save header has limited public Microsoft documentation; validate it in a development tenant before relying on this path. Automated tests verify the request contract and approval boundaries, not server-side header behavior. If the tenant rejects the draft request, Oddy stops and reports the error rather than retrying a published update.
+
+## Table and column schema changes
+
+Oddy can preview a **complete standard custom table** with its primary-name column and up to 20 additional columns: text/multiline, whole-number, decimal, date-only, date-and-time, boolean, local Choice, and single-target lookups to eligible existing tables. Scalar columns are created with the table; lookups are created through separate one-to-many relationship requests. Existing-table writes remain restricted to customizable, unmanaged standard custom tables. Referenced tables may be eligible system/managed tables such as Contact; they are inspected, not edited directly. Existing-column edits support labels/descriptions, permitted requirement levels, and text-length increases on supported unmanaged non-derived custom columns. Deletion, self-referencing/multi-target lookups, existing relationship edits, type/ownership conversions, global Choice edits, and forms/views/app/security-role configuration are not supported.
+
+Use an explicitly selected unmanaged solution. Search `list_dataverse_solutions` with the supplied **display name**, for example “test table”, and resolve its exact unique name/ID from the results. Duplicate display-name matches require clarification. Invalid publisher entries are reported individually as `solutionIssues` and cannot block unrelated valid solutions. Continue paging using the last candidate's `nextAfterUniqueName`, even if a page has no selectable entries, keeping the same search. Only the selected solution's publisher is strictly revalidated before any write; prefixes are never guessed. Local Choice values use its option-value prefix.
+
+For example: “In solution test table, prepare an organization-owned ConsentOutbox table with a Name primary column, Contact lookup (Restrict on delete), OccurredOn date-time (UserLocal), four old/new consent booleans, ProcessingStatus Choice (Pending/Failed/Success, Pending form default), and multiline Error.” Use a **custom ProcessingStatus** column, not built-in State/Status Reason. `UserLocal` represents a UTC instant displayed in each viewer's local time; `TimeZoneIndependent` represents wall time without conversion. Timestamp precision must be checked in the tenant. Lookup deletion behavior must explicitly be `Restrict` or `RemoveLink`; cascading deletion is excluded. Choice `defaultChoice` sets `DefaultFormValue`, a **form default**, not a server-side guarantee for API-created records. API/event producers must explicitly write Pending. Boolean defaults can be specified explicitly.
+
+The approval card shows all columns, defaults, timezone/delete semantics, the environment/solution, complete before/after target metadata, and every ordered request. **One approval covers the complete creation plan, not a global transaction.** Execution stops on failure without rollback or automatic retries. Its audit retains succeeded, failed, unknown, and not-attempted component outcomes. Partial/uncertain results never automatically continue or become retryable approvals; inspect actual metadata before preparing new work, and never recreate a successfully created table blindly. Older v1 previews are display-only and must be refreshed.
+
+Existing-table operations require an exact latest metadata revision (`RetrieveEntity` with `RetrieveAsIfPublished=true`). Execution rebuilds the approved request sequence and compares target/reference snapshots. Updates use `PUT`, preserve unrelated settings/translations, and set `MSCRM.MergeLabels: true`. Snapshot checks are **not atomic server-side concurrency protection**; coordinate with other makers. Requests are bounded to 30 seconds, responses to 4 MiB, and plans to 128,000 characters.
+
+Saving does not call publish. New metadata may nevertheless be immediately available. Publishing is a **separate, explicitly requested approval** using `PublishXml` for the exact table, never publish-all. It publishes **all pending customizations for that table**, including other makers' changes and related forms/views—not only Oddy edits. The preview's latest metadata snapshot covers table/columns/relationships, not an exhaustive forms/views diff. Publish only when all pending table customizations are ready. Server-side privileges still apply. Only fully successful schema outcomes participate in normal audited continuation; restored previews are read-only history. Creating an outbox schema does not implement event capture, delivery, retries, or security-role grants.
+
+Validate these operations in a development tenant before production use. Automated tests verify transport contracts and approval boundaries, not tenant-side metadata behavior. See Microsoft's [table metadata](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-entity-definitions-using-web-api), [column metadata](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-column-definitions-using-web-api), [lookup relationships](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/create-update-entity-relationships-using-web-api), [date-time behavior](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/behavior-format-date-time-attribute), and [RetrieveEntity](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveentity) documentation.
 
 ## Bulk workflows
 
@@ -272,8 +289,8 @@ Development commands:
 - Web API fallback labels are derived from logical names; localized Dataverse display-name metadata is not loaded yet.
 - Relationship discovery currently supports direct one-to-many and many-to-one metadata. Many-to-many and indirect paths are not supported yet.
 - Related-table display-name resolution may require loading the environment's table catalog when a logical name is not known.
-- Only the eight most recent visible turns are sent to Azure OpenAI for a request. Automatic approval continuations also include the original request and the approved execution outcome so IDs and intent are not lost. When local history is enabled, the full visible transcript remains available locally for browsing and resuming.
-- Automatic continuation applies only to successful live business-record, cloud-flow, membership, or fully completed bulk-job approvals. It stops on failure, rejection, changed environment, revoked consent, or a newer user request. Restored histories never automatically resume; ask Oddy to continue an existing task explicitly.
+- Requests include up to 24 recent visible turns plus a bounded capsule of up to 12 older user turns (20,000 characters), so names and requirements survive clarification loops. Structured schema drafts are included as proposal data, never execution evidence. Current per-request tool availability supersedes stale assistant claims; a tool error does not disable the tool. Automatic approval continuations also include the original request and the approved execution outcome so IDs and intent are not lost. When local history is enabled, the full visible transcript remains available locally for browsing and resuming.
+- Automatic continuation applies only to successful live business-record, cloud-flow, schema, membership, or fully completed bulk-job approvals. It stops on failure, rejection, changed environment, revoked consent, or a newer user request. Restored histories never automatically resume; ask Oddy to continue an existing task explicitly.
 - Local conversation history is protected by the Chrome profile and operating-system account but is not independently encrypted by Oddy.
 - Custom skills currently use a restricted, model-executed workflow: tool access and inputs are enforced by the extension, while ordered workflow instructions are followed by the model. Arbitrary scripts and imported skill packages are not supported.
 - AI-assisted skill management is limited to custom skills and must be enabled per request or by default in settings. Skill changes are atomic; individual workflow fields cannot yet be selectively approved.

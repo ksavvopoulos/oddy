@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeAssistantTool } from '../lib/assistant/execute-tool';
 import { executePrimitiveInActiveTab } from '../lib/browser/primitives';
 import { executeFlowPrimitiveInActiveTab } from '../lib/browser/flows';
+import { executeSchemaPrimitiveInActiveTab } from '../lib/browser/schema';
+import { createSchemaTablePlan } from './fixtures/schema';
 import { openDataverseFlowDesigner } from '../lib/browser/flow-navigation';
 import {
   queryFromArguments,
@@ -13,6 +15,7 @@ import { recordProposal } from './fixtures/proposals';
 
 vi.mock('../lib/browser/primitives', () => ({ executePrimitiveInActiveTab: vi.fn() }));
 vi.mock('../lib/browser/flows', () => ({ executeFlowPrimitiveInActiveTab: vi.fn() }));
+vi.mock('../lib/browser/schema', () => ({ executeSchemaPrimitiveInActiveTab: vi.fn() }));
 vi.mock('../lib/browser/flow-navigation', () => ({ openDataverseFlowDesigner: vi.fn() }));
 afterEach(() => {
   vi.resetAllMocks();
@@ -26,6 +29,57 @@ const context = {
 };
 
 describe('assistant tool dispatch', () => {
+  it('routes schema discovery and preparation but never exposes execution', async () => {
+    await executeAssistantTool(
+      context,
+      'prepare_dataverse_schema_change',
+      JSON.stringify({ plan: createSchemaTablePlan })
+    );
+    expect(executeSchemaPrimitiveInActiveTab).toHaveBeenCalledWith(context, {
+      action: 'prepare_schema_change',
+      origin: context.origin,
+      plan: createSchemaTablePlan
+    });
+    await executeAssistantTool(
+      context,
+      'list_dataverse_solutions',
+      JSON.stringify({ afterUniqueName: null })
+    );
+    expect(executeSchemaPrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'list_schema_solutions',
+      origin: context.origin,
+      afterUniqueName: null
+    });
+    await executeAssistantTool(
+      context,
+      'get_dataverse_table_definition',
+      JSON.stringify({ tableLogicalName: 'new_example' })
+    );
+    expect(executeSchemaPrimitiveInActiveTab).toHaveBeenLastCalledWith(context, {
+      action: 'get_table_definition',
+      origin: context.origin,
+      tableLogicalName: 'new_example'
+    });
+    vi.mocked(executeSchemaPrimitiveInActiveTab).mockClear();
+    for (const tool of [
+      'execute_dataverse_schema_change',
+      'publish_all',
+      'execute_schema_change'
+    ]) {
+      expect((await executeAssistantTool(context, tool, '{}')).ok).toBe(false);
+    }
+    expect(
+      (
+        await executeAssistantTool(
+          context,
+          'prepare_dataverse_schema_change',
+          JSON.stringify({ plan: createSchemaTablePlan, url: '/anything' })
+        )
+      ).ok
+    ).toBe(false);
+    expect(executeSchemaPrimitiveInActiveTab).not.toHaveBeenCalled();
+  });
+
   it.each(['{bad', 'null', '[]', '42', '"text"'])(
     'rejects non-object tool arguments (%s)',
     async (args) => {

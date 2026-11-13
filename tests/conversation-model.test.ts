@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bulkSummary } from './fixtures/bulk';
+import { schemaProposal, consentOutboxPlan } from './fixtures/schema';
 import {
   conversationMessages,
   restoreConversation,
@@ -13,6 +14,22 @@ import {
 } from './fixtures/proposals';
 
 describe('conversation model', () => {
+  it('keeps structured schema draft decisions in context without treating a preview as execution', () => {
+    const messages = conversationMessages([
+      {
+        id: 'schema',
+        role: 'assistant',
+        content: 'Review this proposal.',
+        pendingSchemaChanges: [{ ...schemaProposal, plan: consentOutboxPlan }]
+      }
+    ]);
+    expect(messages[0]?.content).toContain('NOT proof of execution');
+    expect(messages[0]?.content).toContain('OrganizationOwned');
+    expect(messages[0]?.content).toContain('new_ProcessingStatus');
+    expect(messages[0]?.content).not.toContain('RelationshipDefinitions');
+    expect(messages[0]?.content).not.toContain('referenceRevisions');
+  });
+
   it('restores every proposal kind as read-only and preserves saved selections', () => {
     const original = conversationFixture();
     const restored = restoreConversation(original);

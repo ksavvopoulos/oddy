@@ -19,6 +19,10 @@ function approvalActions(): ApprovalActions {
   const conversation = conversationFixture();
   return {
     bulkJobApprovals: {},
+    schemaChangeApprovals: {},
+    setSchemaChangeApprovals: vi.fn(),
+    approveSchemaChange: vi.fn(),
+    rejectSchemaChange: vi.fn(),
     setBulkJobApprovals: vi.fn(),
     approveBulkJob: vi.fn(),
     rejectBulkJob: vi.fn(),

@@ -1,6 +1,6 @@
 {
   "name": "oddy-dataverse",
-  "version": "0.13.3",
+  "version": "0.13.6",
   "license": "MIT",
   "private": true,
   "type": "module",

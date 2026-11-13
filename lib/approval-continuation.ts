@@ -3,6 +3,7 @@ import type {
   StoredTranscriptItem,
   StoredMutationApprovalState,
   StoredFlowChangeApprovalState,
+  StoredSchemaChangeApprovalState,
   StoredListMembershipApprovalState,
   StoredSkillChangeApprovalState,
   StoredBulkJobApprovalState
@@ -10,7 +11,11 @@ import type {
 import type { ToolActivity } from './types';
 
 export type BusinessProposalKind =
-  'pendingMutations' | 'pendingFlowChanges' | 'pendingListMemberships' | 'pendingBulkJobs';
+  | 'pendingMutations'
+  | 'pendingFlowChanges'
+  | 'pendingSchemaChanges'
+  | 'pendingListMemberships'
+  | 'pendingBulkJobs';
 
 /** Transient only: never persist or replay an automatic continuation job. */
 export interface ApprovalContinuation {
@@ -51,6 +56,7 @@ export function decideApprovalContinuation(
     allowSkillTools: boolean;
     mutationApprovals: Record<string, StoredMutationApprovalState>;
     flowChangeApprovals?: Record<string, StoredFlowChangeApprovalState>;
+    schemaChangeApprovals?: Record<string, StoredSchemaChangeApprovalState>;
     listMembershipApprovals: Record<string, StoredListMembershipApprovalState>;
     skillChangeApprovals: Record<string, StoredSkillChangeApprovalState>;
     bulkJobApprovals?: Record<string, StoredBulkJobApprovalState>;
@@ -73,11 +79,13 @@ export function decideApprovalContinuation(
   const approvedState =
     event.kind === 'pendingMutations'
       ? state.mutationApprovals[event.proposalId]
-      : event.kind === 'pendingFlowChanges'
-        ? state.flowChangeApprovals?.[event.proposalId]
-        : event.kind === 'pendingBulkJobs'
-          ? state.bulkJobApprovals?.[event.proposalId]
-          : state.listMembershipApprovals[event.proposalId];
+      : event.kind === 'pendingSchemaChanges'
+        ? state.schemaChangeApprovals?.[event.proposalId]
+        : event.kind === 'pendingFlowChanges'
+          ? state.flowChangeApprovals?.[event.proposalId]
+          : event.kind === 'pendingBulkJobs'
+            ? state.bulkJobApprovals?.[event.proposalId]
+            : state.listMembershipApprovals[event.proposalId];
   if (approvedState?.status !== 'approved') return { action: 'skip' };
 
   // Wait for the user to resolve sibling proposals; never approve them implicitly.
@@ -92,6 +100,9 @@ export function decideApprovalContinuation(
       (item) =>
         item.pendingMutations?.some((p) => stopped(state.mutationApprovals[p.id]?.status)) ||
         item.pendingFlowChanges?.some((p) => stopped(state.flowChangeApprovals?.[p.id]?.status)) ||
+        item.pendingSchemaChanges?.some((p) =>
+          stopped(state.schemaChangeApprovals?.[p.id]?.status)
+        ) ||
         item.pendingListMemberships?.some((p) =>
           stopped(state.listMembershipApprovals[p.id]?.status)
         ) ||
@@ -106,6 +117,9 @@ export function decideApprovalContinuation(
         item.pendingMutations?.some((p) => unresolved(state.mutationApprovals[p.id]?.status)) ||
         item.pendingFlowChanges?.some((p) =>
           unresolved(state.flowChangeApprovals?.[p.id]?.status)
+        ) ||
+        item.pendingSchemaChanges?.some((p) =>
+          unresolved(state.schemaChangeApprovals?.[p.id]?.status)
         ) ||
         item.pendingListMemberships?.some((p) =>
           unresolved(state.listMembershipApprovals[p.id]?.status)
@@ -131,7 +145,7 @@ export function approvalContinuationPrompt(event: ApprovalContinuation): string 
   return (
     `Continue only the unfinished parts of the original user request below. ` +
     `The approved operation has already succeeded: do not repeat it or recreate its record. ` +
-    `Use its exact returned record or workflow ID from the authoritative outcome. ` +
+    `Use its exact returned record/workflow ID or table/column logical name from the authoritative outcome. ` +
     `If the original request is complete, briefly confirm completion and stop. ` +
     `If another write is needed, prepare a NEW preview and wait for explicit approval; never execute it. ` +
     `Do not repeat rejected steps, retry failed proposals, or add unrelated work.\n\n` +

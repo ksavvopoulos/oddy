@@ -39,6 +39,35 @@ export function activityForTool(toolName: string, result: AssistantToolResult): 
           )
           .join('; ')
       };
+    if (result.action === 'list_schema_solutions')
+      return {
+        name: toolName,
+        label: 'Listed unmanaged solutions',
+        summary: `${result.solutions?.length || 0} selectable solutions · ${result.solutionIssues?.length || 0} unavailable entries${result.nextAfterUniqueName ? ' · more pages remain' : ''}`,
+        details: result.solutionIssues?.length ? JSON.stringify(result.solutionIssues) : undefined
+      };
+    if (result.action === 'get_table_definition')
+      return {
+        name: toolName,
+        label: 'Read latest table definition',
+        summary: result.tableDefinition?.logicalName || 'Dataverse metadata'
+      };
+    if (result.action === 'prepare_schema_change')
+      return {
+        name: toolName,
+        label: 'Prepared schema change',
+        summary: 'Awaiting explicit approval; no metadata written or published',
+        details: result.schemaChange
+          ? `${result.schemaChange.plan.operation} · ${result.schemaChange.tableLogicalName}`
+          : undefined
+      };
+    if (result.action === 'execute_schema_change')
+      return {
+        name: toolName,
+        label: 'Applied approved schema change',
+        summary: result.schemaChangeResult?.message || 'Schema request completed',
+        details: JSON.stringify(result.schemaChangeResult)
+      };
     if (result.action === 'list_skills') {
       return {
         name: toolName,
