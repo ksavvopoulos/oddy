@@ -33,10 +33,15 @@ const position = {
   description: 'Zero-based insert index; null appends at the end.'
 };
 const fieldRef = { ...string, description: 'Column logical name, e.g. emailaddress1.' };
-const tabRef = { ...string, description: 'Exact tab `name` from get_dataverse_form_definition.' };
+const tabRef = {
+  ...string,
+  description:
+    'Exact tab `name` from get_dataverse_form_definition, or its `id` when it has no name.'
+};
 const sectionRef = {
   ...string,
-  description: 'Exact section `name` from get_dataverse_form_definition.'
+  description:
+    'Exact section `name` from get_dataverse_form_definition, or its `id` when it has no name.'
 };
 const newName = {
   ...string,
@@ -91,6 +96,8 @@ const edit = {
       showLabel: nullableBoolean
     }),
     object({ op: op('add_tab'), name: newName, label: string, position }),
+    object({ op: op('remove_section'), tab: tabRef, section: sectionRef }),
+    object({ op: op('remove_tab'), tab: tabRef }),
     object({
       op: op('set_tab'),
       tab: tabRef,
@@ -139,7 +146,7 @@ export const FORM_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'get_dataverse_form_definition',
       description:
-        'Read one form’s latest saved layout (including unpublished edits when Dataverse allows) as tabs → sections → controls, plus header/footer fields, script libraries, event handler counts, custom (PCF) control count, and a revision hash. Controls report field logical names, labels, visibility, and form-level read-only. Form read-only/hidden is presentation only, not security. Pass the revision and tab/section `name` values to prepare_dataverse_form_change.',
+        'Read one form’s latest saved layout (including unpublished edits when Dataverse allows) as tabs → sections → controls, plus header/footer fields, script libraries, event handler counts, custom (PCF) control count, and a revision hash. Controls report field logical names, labels, visibility, and form-level read-only. Form read-only/hidden is presentation only, not security. Pass the revision and tab/section `name` (or `id` when unnamed) values to prepare_dataverse_form_change.',
       parameters: object({
         tableLogicalName: {
           ...string,
@@ -158,7 +165,7 @@ export const FORM_TOOLS: AzureToolDefinition[] = [
     function: {
       name: 'prepare_dataverse_form_change',
       description:
-        'Prepare a form edit for explicit user approval; NEVER writes. edit_form applies ordered edits to one main or quick create form: add/move/remove/set fields in the form body, add/set sections and tabs. Columns must already exist on the table (create them with schema tools first). Removing a field removes it from the form only, never the column or data. Fields with OnChange handlers cannot be removed. Header fields, sub-grids, scripts, and custom controls are not editable. One preview may hold up to 30 edits; put all requested edits for one form in one preview. Saving does not publish. publish_table_forms is a separate approval, only when the user asks to publish: it publishes ALL pending customizations for the table by any maker; disclose that. Pass null for unused edit options.',
+        'Prepare a form edit for explicit user approval; NEVER writes. edit_form applies ordered edits to one main or quick create form: add/move/remove/set fields in the form body, add/set/remove sections and tabs. Tabs and sections are addressed by `name`, or by `id` when they have no name. Only EMPTY sections/tabs can be removed (spacers are fine): put move_field/remove_field edits for their fields earlier in the same preview, and keep the primary name field somewhere on the form. Columns must already exist on the table (create them with schema tools first). Removing a field removes it from the form only, never the column or data. Fields with OnChange handlers cannot be removed. Header fields, sub-grids, scripts, and custom controls are not editable. One preview may hold up to 30 edits; put all requested edits for one form in one preview. Saving does not publish. publish_table_forms is a separate approval, only when the user asks to publish: it publishes ALL pending customizations for the table by any maker; disclose that. Pass null for unused edit options.',
       parameters: object({ plan })
     }
   }

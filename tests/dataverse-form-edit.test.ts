@@ -9,7 +9,8 @@ import {
   formSolutionRow,
   mainFormId,
   mainFormRow,
-  mainFormXml
+  mainFormXml,
+  unnamedTabFormXml
 } from './fixtures/forms';
 
 type Call = { method: string; path: string; headers: Record<string, string>; body?: any };
@@ -417,5 +418,105 @@ describe('table publishing for forms', () => {
         }
       })
     ]);
+  });
+});
+
+describe('unnamed tabs and tab/section removal', () => {
+  const generalTab = '9d1f6c2a-0000-0000-0000-0000000000a1';
+  const generalSection = '9d1f6c2a-0000-0000-0000-0000000000a2';
+  beforeEach(() => {
+    formXml = unnamedTabFormXml;
+  });
+
+  it('exposes ids so unnamed tabs and sections can be addressed', async () => {
+    const result = await execute({
+      action: 'get_form_definition',
+      origin,
+      tableLogicalName: 'contact',
+      formId: mainFormId
+    });
+    const [general, consents] = result.formDefinition!.tabs;
+    expect(general).toMatchObject({ id: generalTab, label: 'General' });
+    expect(general!.name).toBeUndefined();
+    expect(general!.sections[0]).toMatchObject({ id: generalSection, label: 'General' });
+    expect(consents).toMatchObject({
+      name: 'consents',
+      id: '9d1f6c2a-0000-0000-0000-0000000000b1'
+    });
+  });
+
+  it('removes an unnamed tab after moving its fields out in the same preview', async () => {
+    const change = await prepared([
+      {
+        op: 'move_field',
+        field: 'fullname',
+        tab: 'consents',
+        section: 'consent_main',
+        position: 0
+      },
+      { op: 'remove_tab', tab: `{${generalTab.toUpperCase()}}` }
+    ]);
+    expect(change.summary).toEqual([
+      'Move fullname to Consents › Consent at row 1',
+      'Remove empty tab General and its sections'
+    ]);
+    expect(change.after!.tabs.map((tab) => tab.label)).toEqual(['Consents']);
+    expect(fieldsIn(change, 'consent_main')).toEqual(['fullname', 'emailaddress1']);
+    calls = [];
+    expect((await apply(change)).formChangeResult?.status).toBe('saved');
+    const saved: string = writes().find((w) => w.method === 'PATCH')!.body.formxml;
+    expect(saved).not.toContain(generalTab);
+    expect(saved).toContain('TabStateChange');
+  });
+
+  it('removes empty sections, keeping spacers out of the way', async () => {
+    const change = await prepared([
+      { op: 'move_field', field: 'fullname', tab: 'consents', section: 'consent_main' },
+      { op: 'remove_section', tab: generalTab, section: generalSection },
+      { op: 'remove_section', tab: 'consents', section: 'empty_one' }
+    ]);
+    expect(change.summary.slice(1)).toEqual([
+      'Remove empty section General from tab General',
+      'Remove empty section Empty from tab Consents'
+    ]);
+    expect(change.after!.tabs[0]!.sections).toEqual([]);
+  });
+
+  it.each([
+    [[{ op: 'remove_tab', tab: generalTab }], 'still contains fullname'],
+    [
+      [{ op: 'remove_section', tab: 'consents', section: 'consent_main' }],
+      'still contains emailaddress1'
+    ],
+    [
+      [
+        { op: 'move_field', field: 'emailaddress1', tab: generalTab, section: generalSection },
+        { op: 'remove_tab', tab: 'consents' }
+      ],
+      'TabStateChange script handlers'
+    ],
+    [
+      [
+        { op: 'set_tab', tab: 'consents', visible: false },
+        { op: 'move_field', field: 'fullname', tab: 'consents', section: 'consent_main' },
+        { op: 'remove_tab', tab: generalTab }
+      ],
+      'At least one visible tab must remain'
+    ],
+    [[{ op: 'remove_tab', tab: 'General' }], 'Tab "General" was not found']
+  ])('refuses unsafe removals: %j', async (edits, message) => {
+    const result = await prepare(edits);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain(message);
+  });
+});
+
+describe('transport errors', () => {
+  it('explains an HTML page returned instead of JSON', async () => {
+    vi.mocked(fetch).mockImplementationOnce(
+      async () => new Response('<!doctype html><html></html>', { status: 200 })
+    );
+    const result = await execute({ action: 'list_forms', origin, tableLogicalName: 'contact' });
+    expect(result.error).toContain('Dataverse returned a web page instead of data');
   });
 });

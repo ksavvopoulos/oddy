@@ -108,7 +108,14 @@ export async function executeDataverseFormPrimitive(
             response.status >= 400 && response.status < 500 && response.status !== 408
         }
       );
-    const result: unknown = content ? JSON.parse(content) : {};
+    let result: unknown = {};
+    try {
+      result = content ? JSON.parse(content) : {};
+    } catch {
+      throw new Error(
+        'Dataverse returned a web page instead of data; the session may need a refresh. Reload the Dataverse tab and try again.'
+      );
+    }
     if (!object(result)) throw new Error('Invalid Dataverse form response.');
     return result;
   };
@@ -182,6 +189,14 @@ export async function executeDataverseFormPrimitive(
     value ? ({ [key]: value } as Record<K, string>) : {};
   const sameName = (element: Element, value: string) =>
     (element.getAttribute('name') ?? '').toLowerCase() === value.toLowerCase();
+  const idOf = (element: Element) =>
+    element
+      .getAttribute('id')
+      ?.replace(/^\{|\}$/g, '')
+      .toLowerCase() || undefined;
+  /** Matches a tab/section by its `name`, or by its `id` (with or without braces). */
+  const matches = (element: Element, value: string) =>
+    sameName(element, value) || idOf(element) === value.replace(/^\{|\}$/g, '').toLowerCase();
 
   const project = (document: Document, languageCode?: number) => {
     const root = document.documentElement;
@@ -253,6 +268,7 @@ export async function executeDataverseFormPrimitive(
 
     const tabs: FormTab[] = children(child(root, 'tabs'), 'tab').map((tab) => ({
       ...optional('name', tab.getAttribute('name')),
+      ...optional('id', idOf(tab)),
       ...optional('label', labelOf(tab, languageCode)),
       showLabel: bool(tab, 'showlabel', true),
       visible: bool(tab, 'visible', true),
@@ -260,6 +276,7 @@ export async function executeDataverseFormPrimitive(
       sections: children(child(tab, 'columns'), 'column').flatMap((column, tabColumn) =>
         children(child(column, 'sections'), 'section').map((section): FormSection => ({
           ...optional('name', section.getAttribute('name')),
+          ...optional('id', idOf(section)),
           ...optional('label', labelOf(section, languageCode)),
           showLabel: bool(section, 'showlabel', true),
           visible: bool(section, 'visible', true),
@@ -402,7 +419,9 @@ export async function executeDataverseFormPrimitive(
     add_section: ['tab', 'name', 'label', 'columns', 'tabColumn', 'position', 'showLabel'],
     set_section: ['tab', 'section', 'label', 'visible', 'showLabel'],
     add_tab: ['name', 'label', 'position'],
-    set_tab: ['tab', 'label', 'visible', 'expanded', 'showLabel']
+    set_tab: ['tab', 'label', 'visible', 'expanded', 'showLabel'],
+    remove_section: ['tab', 'section'],
+    remove_tab: ['tab']
   };
   // Model tool calls send null for unused options.
   const compact = (value: Obj): Obj =>
@@ -440,21 +459,43 @@ export async function executeDataverseFormPrimitive(
         children(child(column, 'sections'), 'section')
       );
     const findTab = (value: unknown) => {
-      const tabName = text(value, 'tab name', 100);
-      const matches = tabs().filter((tab) => sameName(tab, tabName));
-      if (matches.length !== 1)
-        throw new Error(`Tab "${tabName}" was ${matches.length ? 'ambiguous' : 'not found'}.`);
-      return matches[0]!;
+      const tabName = text(value, 'tab name or id', 100);
+      const found = tabs().filter((tab) => matches(tab, tabName));
+      if (found.length !== 1)
+        throw new Error(`Tab "${tabName}" was ${found.length ? 'ambiguous' : 'not found'}.`);
+      return found[0]!;
     };
     const findSection = (tabValue: unknown, sectionValue: unknown) => {
       const tab = findTab(tabValue);
-      const sectionName = text(sectionValue, 'section name', 100);
-      const matches = sectionsOf(tab).filter((section) => sameName(section, sectionName));
-      if (matches.length !== 1)
+      const sectionName = text(sectionValue, 'section name or id', 100);
+      const found = sectionsOf(tab).filter((section) => matches(section, sectionName));
+      if (found.length !== 1)
         throw new Error(
-          `Section "${sectionName}" was ${matches.length ? 'ambiguous' : 'not found'} in tab "${tab.getAttribute('name')}".`
+          `Section "${sectionName}" was ${found.length ? 'ambiguous' : 'not found'} in tab "${tab.getAttribute('name') ?? idOf(tab)}".`
         );
-      return { tab, section: matches[0]! };
+      return { tab, section: found[0]! };
+    };
+    const tabTitle = (tab: Element) =>
+      labelOf(tab, context.languageCode) ?? tab.getAttribute('name') ?? idOf(tab);
+    const contentOf = (section: Element) =>
+      children(child(section, 'rows'), 'row')
+        .flatMap((row) => children(row, 'cell'))
+        .map((cell) => child(cell, 'control'))
+        .filter((control): control is Element => !!control)
+        .map(
+          (control) =>
+            control.getAttribute('datafieldname') || control.getAttribute('id') || 'control'
+        );
+    const ownHandlers = (element: Element) =>
+      children(child(element, 'events'), 'event').reduce(
+        (sum, event) => sum + children(child(event, 'Handlers'), 'Handler').length,
+        0
+      );
+    const scriptNote = (kind: string, element: Element) => {
+      if (children(child(root, 'formLibraries'), 'Library').length)
+        warnings.push(
+          `This form has script libraries; scripts that refer to the removed ${kind} ${element.getAttribute('name') ?? ''} by name may fail.`
+        );
     };
     const bodyCells = (field: string) =>
       tabs()
@@ -723,6 +764,42 @@ export async function executeDataverseFormPrimitive(
         summaryLines.push(
           `Add tab ${label} (${tabName}) at position ${index + 1} with one section ${sectionName}`
         );
+        continue;
+      }
+
+      if (op === 'remove_section') {
+        const { tab, section } = findSection(edit.tab, edit.section);
+        const content = contentOf(section);
+        if (content.length)
+          throw new Error(
+            `Section ${section.getAttribute('name') ?? idOf(section)} still contains ${content.join(', ')}. Move or remove them first (earlier edits in the same preview count).`
+          );
+        if (ownHandlers(section))
+          throw new Error('This section has script handlers; remove it in the form designer.');
+        section.parentElement!.removeChild(section);
+        scriptNote('section', section);
+        summaryLines.push(
+          `Remove empty section ${labelOf(section, context.languageCode) ?? section.getAttribute('name') ?? idOf(section)} from tab ${tabTitle(tab)}`
+        );
+        continue;
+      }
+
+      if (op === 'remove_tab') {
+        const tab = findTab(edit.tab);
+        const content = sectionsOf(tab).flatMap(contentOf);
+        if (content.length)
+          throw new Error(
+            `Tab ${tabTitle(tab)} still contains ${content.join(', ')}. Move or remove them first (earlier edits in the same preview count).`
+          );
+        if (ownHandlers(tab))
+          throw new Error(
+            'This tab has TabStateChange script handlers; remove it in the form designer.'
+          );
+        if (tabs().filter((t) => t !== tab && bool(t, 'visible', true)).length === 0)
+          throw new Error('At least one visible tab must remain.');
+        tabsElement.removeChild(tab);
+        scriptNote('tab', tab);
+        summaryLines.push(`Remove empty tab ${tabTitle(tab)} and its sections`);
         continue;
       }
 

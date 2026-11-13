@@ -4,6 +4,10 @@ import type { FormControl, FormTab, PreparedFormChange } from '../../lib/forms/c
 import type { ApprovalActions } from './useApprovals';
 
 type Mark = 'added' | 'moved' | 'changed';
+type Container = { name?: string; id?: string; label?: string };
+/** Unnamed tabs/sections (such as a default General tab) are keyed by id. */
+const keyOf = (container: Container) => container.name ?? container.id ?? '';
+const titleOf = (container: Container) => container.label || container.name || container.id || '';
 
 function fieldIndex(tabs: FormTab[] = []) {
   const index = new Map<string, { place: string; control: FormControl }>();
@@ -11,7 +15,7 @@ function fieldIndex(tabs: FormTab[] = []) {
     for (const section of tab.sections)
       for (const control of section.controls)
         if (control.field)
-          index.set(control.field, { place: `${tab.name}/${section.name}`, control });
+          index.set(control.field, { place: `${keyOf(tab)}/${keyOf(section)}`, control });
   return index;
 }
 
@@ -33,13 +37,22 @@ export function formLayoutDiff(change: Pick<PreparedFormChange, 'before' | 'afte
       marks.set(field, 'changed');
   }
   const removed = [...before.keys()].filter((field) => !after.has(field));
-  const names = (tabs: FormTab[] = []) =>
-    new Set(
-      tabs.flatMap((tab) => [`tab:${tab.name}`, ...tab.sections.map((s) => `section:${s.name}`)])
+  const containers = (tabs: FormTab[] = []) =>
+    new Map(
+      tabs.flatMap((tab) => [
+        [`tab:${keyOf(tab)}`, `tab ${titleOf(tab)}`] as const,
+        ...tab.sections.map(
+          (section) => [`section:${keyOf(section)}`, `section ${titleOf(section)}`] as const
+        )
+      ])
     );
-  const previousNames = names(change.before?.tabs);
-  const newContainers = [...names(change.after?.tabs)].filter((key) => !previousNames.has(key));
-  return { marks, removed, newContainers: new Set(newContainers) };
+  const previous = containers(change.before?.tabs);
+  const next = containers(change.after?.tabs);
+  const newContainers = new Set([...next.keys()].filter((key) => !previous.has(key)));
+  const removedContainers = [...previous]
+    .filter(([key]) => !next.has(key))
+    .map(([, title]) => title);
+  return { marks, removed, newContainers, removedContainers };
 }
 
 const markLabel: Record<Mark, string> = { added: 'new', moved: 'moved', changed: 'changed' };
@@ -59,19 +72,21 @@ function LayoutTree({ tabs, diff }: { tabs: FormTab[]; diff?: ReturnType<typeof 
   return (
     <ul className="form-layout">
       {tabs.map((tab, tabIndex) => (
-        <li key={`${tab.name}-${tabIndex}`}>
+        <li key={`${keyOf(tab)}-${tabIndex}`}>
           <strong>
-            {tab.label || tab.name}
+            {titleOf(tab)}
             {!tab.visible && ' · hidden'}
-            {diff?.newContainers.has(`tab:${tab.name}`) && <mark> new tab</mark>}
+            {diff?.newContainers.has(`tab:${keyOf(tab)}`) && <mark> new tab</mark>}
           </strong>
           <ul>
             {tab.sections.map((section, sectionIndex) => (
-              <li key={`${section.name}-${sectionIndex}`}>
+              <li key={`${keyOf(section)}-${sectionIndex}`}>
                 <em>
-                  {section.label || section.name}
+                  {titleOf(section)}
                   {!section.visible && ' · hidden'}
-                  {diff?.newContainers.has(`section:${section.name}`) && <mark> new section</mark>}
+                  {diff?.newContainers.has(`section:${keyOf(section)}`) && (
+                    <mark> new section</mark>
+                  )}
                 </em>
                 <ul>
                   {section.controls.map((control, controlIndex) => {
@@ -146,6 +161,9 @@ export function FormChangeCards({
                 <li key={index}>{line}</li>
               ))}
             </ol>
+            {diff && diff.removedContainers.length > 0 && (
+              <p className="mutation-note">Removed: {diff.removedContainers.join(', ')}</p>
+            )}
             {diff && diff.removed.length > 0 && (
               <p className="mutation-note">
                 Removed from the form (column and data unchanged): {diff.removed.join(', ')}

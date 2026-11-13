@@ -33,6 +33,8 @@ export interface FormControl {
 
 export interface FormSection {
   name?: string;
+  /** Section id without braces; use it when the section has no name. */
+  id?: string;
   label?: string;
   showLabel: boolean;
   visible: boolean;
@@ -45,6 +47,8 @@ export interface FormSection {
 
 export interface FormTab {
   name?: string;
+  /** Tab id without braces; use it when the tab has no name. */
+  id?: string;
   label?: string;
   showLabel: boolean;
   visible: boolean;
@@ -81,7 +85,7 @@ export interface FormDefinition {
   truncated?: boolean;
 }
 
-/** One layout edit. Tabs and sections are addressed by their stable `name`, fields by logical name. */
+/** One layout edit. Tabs and sections are addressed by `name` or `id`, fields by logical name. */
 export type FormEdit =
   | {
       op: 'add_field';
@@ -131,7 +135,10 @@ export type FormEdit =
       visible?: boolean;
       expanded?: boolean;
       showLabel?: boolean;
-    };
+    }
+  /** Only empty sections and tabs (spacers allowed) can be removed. */
+  | { op: 'remove_section'; tab: string; section: string }
+  | { op: 'remove_tab'; tab: string };
 
 export type FormPlan =
   | {

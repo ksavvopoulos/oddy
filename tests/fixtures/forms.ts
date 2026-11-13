@@ -202,3 +202,63 @@ export const formEditPlan = {
   tableLogicalName: 'contact',
   formId: mainFormId
 };
+
+/** Shape of a default generated main form: the General tab and its section have no name. */
+export const unnamedTabFormXml = `<form>
+  <tabs>
+    <tab verticallayout="true" id="{9d1f6c2a-0000-0000-0000-0000000000a1}" IsUserDefined="1">
+      <labels><label description="General" languagecode="1033" /></labels>
+      <columns>
+        <column width="100%">
+          <sections>
+            <section showlabel="false" showbar="false" IsUserDefined="0" id="{9d1f6c2a-0000-0000-0000-0000000000a2}">
+              <labels><label description="General" languagecode="1033" /></labels>
+              <rows>
+                <row>
+                  <cell id="{9d1f6c2a-0000-0000-0000-0000000000a3}">
+                    <labels><label description="Full Name" languagecode="1033" /></labels>
+                    <control id="fullname" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="fullname" />
+                  </cell>
+                </row>
+                <row>
+                  <cell id="{9d1f6c2a-0000-0000-0000-0000000000a4}" userspacer="true" />
+                </row>
+              </rows>
+            </section>
+          </sections>
+        </column>
+      </columns>
+    </tab>
+    <tab name="consents" id="{9d1f6c2a-0000-0000-0000-0000000000b1}">
+      <labels><label description="Consents" languagecode="1033" /></labels>
+      <columns>
+        <column width="100%">
+          <sections>
+            <section name="consent_main" id="{9d1f6c2a-0000-0000-0000-0000000000b2}">
+              <labels><label description="Consent" languagecode="1033" /></labels>
+              <rows>
+                <row>
+                  <cell id="{9d1f6c2a-0000-0000-0000-0000000000b3}">
+                    <labels><label description="Email" languagecode="1033" /></labels>
+                    <control id="emailaddress1" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="emailaddress1" />
+                  </cell>
+                </row>
+              </rows>
+            </section>
+            <section name="empty_one" id="{9d1f6c2a-0000-0000-0000-0000000000b4}">
+              <labels><label description="Empty" languagecode="1033" /></labels>
+              <rows />
+            </section>
+          </sections>
+        </column>
+      </columns>
+      <events>
+        <event name="TabStateChange" application="false" active="false">
+          <Handlers>
+            <Handler functionName="onTab" libraryName="contoso_/x.js" handlerUniqueId="{11111111-0000-0000-0000-0000000000c1}" enabled="true" />
+          </Handlers>
+        </event>
+      </events>
+    </tab>
+  </tabs>
+</form>`;
