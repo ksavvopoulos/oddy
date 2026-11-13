@@ -1,6 +1,6 @@
 # Oddy Privacy Policy
 
-**Effective date: November 5, 2026**
+**Effective date: November 13, 2026**
 
 Oddy is a browser extension that provides conversational assistance for Microsoft Dataverse and Power Automate. This policy describes the published extension's data handling and the project's privacy-policy website. The project is maintained at [github.com/ksavvopoulos/oddy](https://github.com/ksavvopoulos/oddy).
 
@@ -17,7 +17,7 @@ Depending on the features you enable and the requests you make, Oddy may handle:
 - **Connection settings:** your Azure endpoint, deployment name, API version, API key, system prompt, and preferences.
 - **Application context:** the active page's URL and title, Dataverse environment and app identifiers, table, record and form identifiers, selected record fields, and signed-in user time-zone and locale settings. Context may be read locally when the side panel refreshes, before a prompt is submitted.
 - **Conversation content:** prompts, assistant responses, relevant recent conversation turns, tool results, proposed changes, approval outcomes, and workflow-skill instructions.
-- **Dataverse information:** records, table/column definitions, solution and publisher metadata, relationship metadata, personal-view definitions, cloud-flow definitions and connection-reference metadata, and other information returned by enabled tools within your existing permissions.
+- **Dataverse information:** records, table/column definitions, model-driven form definitions and layouts, solution and publisher metadata, relationship metadata, personal-view definitions, cloud-flow definitions and connection-reference metadata, and other information returned by enabled tools within your existing permissions.
 - **Bulk-workspace information:** uploaded CSV or JSON data, dataset names and column metadata, field mappings, frozen record selections, before-images, record versions, job checkpoints, and execution results.
 
 CRM records, uploaded files, and messages can contain names, email addresses, other personal information, communications, business or financial information, or other sensitive data. Their contents depend on your environment and requests. Do not supply information you are not authorized to process, and avoid including sensitive information that is unnecessary for the task.
@@ -28,7 +28,7 @@ Oddy inspects the active page to provide application context and navigation. It 
 
 Oddy uses information to answer your requests, identify and navigate Dataverse records, prepare proposed changes, run approved operations, provide reusable skills, and support local history and recovery.
 
-When you submit a prompt, Oddy sends the prompt, relevant conversation context, and included record context to the Azure OpenAI endpoint you configured. Context can include up to 24 recent visible turns, a bounded excerpt of up to 12 older user turns (20,000 characters), and structured schema proposal drafts so requirements survive clarification loops. Proposal drafts are not treated as evidence that a write succeeded. If you enable Dataverse tools, additional requests can send retrieved records, schema information, form layouts, flow definitions, and tool outcomes to that endpoint. Approved multi-step workflows can continue automatically with the original request and execution outcome; this can involve further AI requests.
+When you submit a prompt, Oddy sends the prompt, relevant conversation context, and included record context to the Azure OpenAI endpoint you configured. Context can include up to 24 recent visible turns, a bounded excerpt of up to 12 older user turns (20,000 characters), and structured schema and form proposal drafts so requirements survive clarification loops. Proposal drafts are not treated as evidence that a write succeeded. If you enable Dataverse tools, additional requests can send retrieved records, schema information, form layouts, flow definitions, and tool outcomes to that endpoint. Approved multi-step workflows can continue automatically with the original request and execution outcome; this can involve further AI requests.
 
 The configured Azure API key is sent in authentication headers to that Azure endpoint. Oddy does not automatically insert it into chat prompts. Dataverse operations use the browser's existing signed-in session; Oddy does not ask you to enter a separate Dataverse password.
 
@@ -59,7 +59,7 @@ You can:
 
 Deleting local history or bulk data does not delete data already sent to Azure, undo Dataverse changes, or erase copies retained by Microsoft or your organization. Deleting bulk checkpoints also removes recovery evidence for uncertain operations. Contact your service administrator about access or deletion in Azure and Dataverse.
 
-Business-record changes, cloud-flow changes, table/column schema changes, table-scoped customization publishing, marketing-list membership changes, and model-proposed custom-skill changes require explicit approval in Oddy. Table publishing is a separate approval and applies all pending customizations for the selected table, including changes made outside Oddy. Personal AI Result views may be created or updated as part of the explicitly enabled view-management functionality.
+Business-record changes, cloud-flow changes, table/column schema changes, model-driven form layout changes, table-scoped customization publishing, marketing-list membership changes, and model-proposed custom-skill changes require explicit approval in Oddy. Table publishing is a separate approval and applies all pending customizations for the selected table, including form changes and changes made outside Oddy. Removing a field from a form does not delete the column or its data. Personal AI Result views may be created or updated as part of the explicitly enabled view-management functionality.
 
 ## 6. No advertising or unrelated data use
 
